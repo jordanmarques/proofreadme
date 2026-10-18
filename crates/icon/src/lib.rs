@@ -5,7 +5,8 @@
 //! application (session icon), its build script (icon of the Windows executable) and `xtask`
 //! (icon of the macOS bundle) alike.
 //!
-//! - [`glyph`]: the motif alone, in one colour, on a transparent background (session icon);
+//! - [`glyph`]: the motif alone, in one colour, on a transparent background;
+//! - [`session`]: the session icon in one of its [`Look`]s (idle, running, alert);
 //! - [`application`]: the orange motif on a dark tile with rounded corners (application icon);
 //! - [`ico`]: the application icon in the Windows `.ico` format.
 #![forbid(unsafe_code)]
@@ -28,6 +29,29 @@ pub const MAX_SIDE: u32 = 1024;
 #[must_use]
 pub fn glyph(side: u32, color: [u8; 3]) -> Vec<u8> {
     image(side, |x, y| is_in_glyph(x, y).then_some(color))
+}
+
+/// What the session icon shows of the agent. The looks differ by shape, not by colour alone: on
+/// macOS the menu bar tints the icon in one colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Look {
+    /// The motif itself: brackets around a check mark.
+    Idle,
+    /// Brackets around three dots.
+    Running,
+    /// Brackets around an exclamation mark.
+    Alert,
+}
+
+/// The session icon in the given look: a square image of `side` pixels ([`MAX_SIDE`] at most), in
+/// non-premultiplied RGBA, in the given colour on a transparent background.
+#[must_use]
+pub fn session(side: u32, color: [u8; 3], look: Look) -> Vec<u8> {
+    match look {
+        Look::Idle => glyph(side, color),
+        Look::Running => image(side, |x, y| (is_in_brackets(x, y) || is_in_dots(x, y)).then_some(color)),
+        Look::Alert => image(side, |x, y| (is_in_brackets(x, y) || is_in_exclamation(x, y)).then_some(color)),
+    }
 }
 
 /// The application icon: a square image of `side` pixels ([`MAX_SIDE`] at most), in
@@ -163,17 +187,27 @@ fn image(side: u32, color_at: impl Fn(f32, f32) -> Option<[u8; 3]>) -> Vec<u8> {
 
 /// The glyph in the unit square: true if the point belongs to it.
 fn is_in_glyph(x: f32, y: f32) -> bool {
+    /// The three points of the check mark: the start of the short arm, the low point, the end of
+    /// the long arm (y points down).
+    const CHECK: [(f32, f32); 3] = [(0.30, 0.50), (0.44, 0.64), (0.70, 0.36)];
+    /// The half thickness of the check mark.
+    const HALF_CHECK: f32 = 0.075;
+
+    let check = CHECK.windows(2).any(|arm| match arm {
+        [start, end] => distance_to_segment((x, y), *start, *end) <= HALF_CHECK,
+        _ => false,
+    });
+    is_in_brackets(x, y) || check
+}
+
+/// The four corner brackets in the unit square: true if the point belongs to one.
+fn is_in_brackets(x: f32, y: f32) -> bool {
     /// The margin left around the glyph.
     const MARGIN: f32 = 0.09;
     /// The stroke thickness of the brackets.
     const STROKE: f32 = 0.09;
     /// The length of each arm of a bracket.
     const ARM: f32 = 0.27;
-    /// The three points of the check mark: the start of the short arm, the low point, the end of
-    /// the long arm (y points down).
-    const CHECK: [(f32, f32); 3] = [(0.30, 0.50), (0.44, 0.64), (0.70, 0.36)];
-    /// The half thickness of the check mark.
-    const HALF_CHECK: f32 = 0.075;
 
     // The brackets are symmetric about both axes: reason on the distance to the centre.
     let (dx, dy) = ((x - 0.5).abs(), (y - 0.5).abs());
@@ -181,12 +215,24 @@ fn is_in_glyph(x: f32, y: f32) -> bool {
     let in_the_frame = dx <= edge && dy <= edge;
     let on_the_stroke = dx >= edge - STROKE || dy >= edge - STROKE;
     let near_a_corner = dx >= edge - ARM && dy >= edge - ARM;
-    let bracket = in_the_frame && on_the_stroke && near_a_corner;
-    let check = CHECK.windows(2).any(|arm| match arm {
-        [start, end] => distance_to_segment((x, y), *start, *end) <= HALF_CHECK,
-        _ => false,
-    });
-    bracket || check
+    in_the_frame && on_the_stroke && near_a_corner
+}
+
+/// Three dots on the middle line, for a proofread running.
+fn is_in_dots(x: f32, y: f32) -> bool {
+    const CENTRES: [f32; 3] = [0.31, 0.5, 0.69];
+    const RADIUS: f32 = 0.065;
+
+    CENTRES.iter().any(|&centre| distance_to_segment((x, y), (centre, 0.5), (centre, 0.5)) <= RADIUS)
+}
+
+/// An exclamation mark at the centre: a bar, then a dot below a gap.
+fn is_in_exclamation(x: f32, y: f32) -> bool {
+    const HALF_BAR: f32 = 0.065;
+    const DOT: (f32, f32) = (0.5, 0.72);
+    const DOT_RADIUS: f32 = 0.065;
+
+    distance_to_segment((x, y), (0.5, 0.28), (0.5, 0.54)) <= HALF_BAR || distance_to_segment((x, y), DOT, DOT) <= DOT_RADIUS
 }
 
 /// The distance from a point to the segment that joins `start` to `end`.
@@ -225,6 +271,32 @@ mod tests {
         assert_eq!(alpha(&pixels, 32, 9, 22), 0, "below the short arm, nothing");
         assert_eq!(pixel(&pixels, 32, 4, 4), [0xff, 0x6a, 0x00, 255], "the corner of a bracket is solid");
         assert_eq!(alpha(&pixels, 32, 16, 4), 0, "the brackets do not meet");
+    }
+
+    #[test]
+    fn the_three_session_icons_keep_the_brackets_and_differ_by_shape_at_the_centre() {
+        let color = [0, 0, 0];
+        let (idle, running, alert) = (session(32, color, Look::Idle), session(32, color, Look::Running), session(32, color, Look::Alert));
+
+        assert_eq!(idle, glyph(32, color), "idle is the motif itself");
+        for (name, pixels) in [("running", &running), ("alert", &alert)] {
+            assert_eq!(pixels.len(), 32 * 32 * 4);
+            assert_eq!(alpha(pixels, 32, 4, 4), 255, "{name}: the corner of a bracket is solid");
+            assert_eq!(alpha(pixels, 32, 0, 0), 0, "{name}: the margin is transparent");
+            assert_eq!(alpha(pixels, 32, 14, 20), 0, "{name}: no check mark");
+        }
+        // Running: three dots on the middle line, with gaps between them.
+        assert_eq!(alpha(&running, 32, 16, 16), 255, "the middle dot");
+        assert_eq!(alpha(&running, 32, 10, 16), 255, "the left dot");
+        assert_eq!(alpha(&running, 32, 22, 16), 255, "the right dot");
+        assert_eq!(alpha(&running, 32, 13, 16), 0, "a gap between the dots");
+        assert_eq!(alpha(&running, 32, 16, 11), 0, "nothing above the dots");
+        // Alert: an exclamation mark, a bar then a dot below a gap.
+        assert_eq!(alpha(&alert, 32, 16, 10), 255, "the top of the bar");
+        assert_eq!(alpha(&alert, 32, 16, 16), 255, "the bar");
+        assert_eq!(alpha(&alert, 32, 16, 20), 0, "the gap under the bar");
+        assert_eq!(alpha(&alert, 32, 16, 23), 255, "the dot");
+        assert_eq!(alpha(&alert, 32, 11, 16), 0, "nothing beside the bar");
     }
 
     #[test]
