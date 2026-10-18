@@ -17,7 +17,7 @@ mod storage;
 mod trigger;
 mod wait;
 
-pub use agent::{Activity, Agent, IconState, ProviderTest, State, Step, TEST_SENTENCE, Timing};
+pub use agent::{Activity, Agent, Hook, IconState, Permission, ProviderTest, State, Step, TEST_SENTENCE, Timing};
 pub use error::ProofreadError;
 pub use os::{ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Os, OsError};
 pub use provider::{PendingCorrection, request_correction};

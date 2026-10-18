@@ -12,6 +12,7 @@
 mod icon;
 mod instance;
 mod keychain;
+mod permission;
 mod session;
 mod settings;
 mod startup;
@@ -21,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use kairo::{Button, StatusLight, TitleCard, tokens};
-use proofreadme_core::{Activity, Agent, IconState, Settings, Storage, Timing};
+use proofreadme_core::{Activity, Agent, IconState, Permission, Settings, Storage, Timing};
 
 pub use icon::{IconError, IconPort, SessionIcon};
 pub use instance::{Instance, InstanceListener, announce};
@@ -53,6 +54,8 @@ enum Action {
     Test,
     /// Back to the home screen.
     Back,
+    /// Open the pane of System Settings where the permission of the keyboard hook is granted.
+    OpenPermissionPane,
 }
 
 /// What the settings screen says about the session, beyond the state of the agent.
@@ -81,6 +84,10 @@ pub struct Window {
     /// The session icon, and the look it was last given.
     icon: Option<Box<dyn IconPort>>,
     shown_look: Option<(IconState, bool)>,
+    /// Opens the pane of System Settings where the permission is granted.
+    permission_pane: Option<Box<dyn FnMut()>>,
+    /// The permission seen at the last frame: losing it brings the window back.
+    followed_permission: Permission,
 }
 
 impl Window {
@@ -100,6 +107,8 @@ impl Window {
             registration_error: None,
             icon: None,
             shown_look: None,
+            permission_pane: None,
+            followed_permission: Permission::Granted,
         }
     }
 
@@ -131,6 +140,14 @@ impl Window {
     #[must_use]
     pub fn with_session_icon(mut self, icon: impl IconPort + 'static) -> Self {
         self.icon = Some(Box::new(icon));
+        self
+    }
+
+    /// Gives the window the way to open the pane of System Settings where the permission of the
+    /// keyboard hook is granted: the permission panel offers it while the permission is missing.
+    #[must_use]
+    pub fn with_permission_pane(mut self, open: impl FnMut() + 'static) -> Self {
+        self.permission_pane = Some(Box::new(open));
         self
     }
 
@@ -223,6 +240,11 @@ impl Window {
                 let _ = self.agent.test_provider(&self.draft);
             }
             Action::Back => self.screen = Screen::Home,
+            Action::OpenPermissionPane => {
+                if let Some(open) = self.permission_pane.as_mut() {
+                    open();
+                }
+            }
         }
     }
 }
@@ -233,12 +255,14 @@ impl eframe::App for Window {
     fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_requests(context);
         let state = self.agent.state();
-        let needs_the_user = state.settings_requests > self.followed_requests;
-        if needs_the_user {
+        let needs_the_settings = state.settings_requests > self.followed_requests;
+        if needs_the_settings {
             self.followed_requests = state.settings_requests;
             self.open_settings();
         }
-        self.presence.update(context, needs_the_user);
+        let permission_lost = state.permission != Permission::Granted && state.permission != self.followed_permission;
+        self.followed_permission = state.permission;
+        self.presence.update(context, needs_the_settings || permission_lost);
         self.update_icon(&state);
     }
 
@@ -254,13 +278,15 @@ impl eframe::App for Window {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tokens::BG_BASE).inner_margin(tokens::SPACE_6)).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(tokens::SPACE_5, tokens::SPACE_5);
+                let pane = permission::show(ui, state.permission, self.permission_pane.is_some());
                 action = match self.screen {
                     Screen::Home => home(ui, &state),
                     Screen::Settings => {
                         let session = SessionNotice { registration_error: self.registration_error.as_deref(), no_icon: self.presence.has_no_icon() };
                         settings::show(ui, &mut self.draft, &state, self.saved, &session)
                     }
-                };
+                }
+                .or(pane);
             });
         });
         if self.draft != before {
@@ -276,6 +302,7 @@ impl eframe::App for Window {
 fn home(ui: &mut egui::Ui, state: &proofreadme_core::State) -> Option<Action> {
     ui.add(TitleCard::new("PROOFREADME").kicker("AGENT 校正").height(240.0).title_size(tokens::TEXT_4XL));
     let light = match state.activity {
+        Activity::Idle if state.permission != Permission::Granted => StatusLight::warn().label("Waiting for permission").jp("許可待ち"),
         Activity::Idle => StatusLight::ok().label("Listening").jp("待機"),
         Activity::Proofreading(_) => StatusLight::info().blink(true).label("Proofreading").jp("校正中"),
     };

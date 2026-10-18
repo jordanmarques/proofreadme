@@ -63,6 +63,21 @@ pub struct State {
     pub settings_error: Option<SettingsError>,
     /// The last Test of the provider, if any.
     pub provider_test: Option<ProviderTest>,
+    /// Whether the keyboard hook has the permission it needs, as the platform reports it.
+    pub permission: Permission,
+}
+
+/// The permission of the OS the keyboard hook needs to see the trigger: Accessibility (or Input
+/// Monitoring) on macOS. Windows asks for none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    /// The hook listens.
+    Granted,
+    /// The permission is missing: no trigger reaches the agent until the user grants it.
+    Missing,
+    /// The permission was granted, but the OS lets the hook listen only after a relaunch of the
+    /// agent.
+    RelaunchNeeded,
 }
 
 /// The look of the session icon of the agent.
@@ -72,13 +87,21 @@ pub enum IconState {
     Idle,
     /// Running a proofread.
     Running,
-    /// Listening, after a proofread that failed: the cause is in [`State::last_failure`].
+    /// Listening, after a proofread that failed (the cause is in [`State::last_failure`]), or
+    /// deaf to the trigger while the permission is missing ([`State::permission`]).
     Alert,
 }
 
 impl State {
     fn initial() -> Self {
-        Self { activity: Activity::Idle, last_failure: None, settings_requests: 0, settings_error: None, provider_test: None }
+        Self {
+            activity: Activity::Idle,
+            last_failure: None,
+            settings_requests: 0,
+            settings_error: None,
+            provider_test: None,
+            permission: Permission::Granted,
+        }
     }
 
     /// The look of the session icon for this state.
@@ -86,7 +109,7 @@ impl State {
     pub fn icon(&self) -> IconState {
         match self.activity {
             Activity::Proofreading(_) => IconState::Running,
-            Activity::Idle if self.last_failure.is_some() => IconState::Alert,
+            Activity::Idle if self.last_failure.is_some() || self.permission != Permission::Granted => IconState::Alert,
             Activity::Idle => IconState::Idle,
         }
     }
@@ -322,6 +345,12 @@ impl Agent {
         }
     }
 
+    /// The handle the keyboard hook of the platform holds, on a thread of its own.
+    #[must_use]
+    pub fn hook(&self) -> Hook {
+        Hook { shared: Arc::clone(&self.shared) }
+    }
+
     /// Cancel from the menu of the session icon, offered while a proofread runs
     /// ([`State::can_cancel`]). Without a running proofread, it does nothing.
     ///
@@ -332,5 +361,30 @@ impl Agent {
     /// Waits until no proofread is running, for at most the given delay. True if so.
     pub fn wait_until_idle(&self, delay: Duration) -> bool {
         wait::wait_until(&self.shared.changed, self.shared.control(), delay, |control| control.state.activity == Activity::Idle)
+    }
+}
+
+/// What the keyboard hook of the platform holds of the agent: it feeds it the key events and
+/// reports whether it has the permission to listen. Cheap to clone, usable from any thread.
+#[derive(Clone)]
+pub struct Hook {
+    shared: Arc<Shared>,
+}
+
+impl Hook {
+    /// Takes a key event, as [`Agent::key_event`].
+    pub fn key_event(&self, event: KeyEvent) {
+        Agent { shared: Arc::clone(&self.shared) }.key_event(event);
+    }
+
+    /// Reports the permission of the hook; the state shows it.
+    pub fn permission(&self, permission: Permission) {
+        let mut control = self.shared.control();
+        if control.state.permission == permission {
+            return;
+        }
+        control.state.permission = permission;
+        drop(control);
+        self.shared.notify();
     }
 }

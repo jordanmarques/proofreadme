@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use proofreadme::{RegistrationError, UnwiredOs, Window};
-use proofreadme_core::{Agent, MemoryKeychain, Provider, Settings, Storage, Timing};
+use proofreadme_core::{Agent, MemoryKeychain, Permission, Provider, Settings, Storage, Timing};
 use proofreadme_icon::Look;
 
 /// The size of the captured window, in points: the one the application opens at.
@@ -44,6 +44,7 @@ fn main() -> ExitCode {
 fn capture(folder: &Path) -> Result<(), String> {
     fs::create_dir_all(folder).map_err(say)?;
     home(folder)?;
+    permission_missing(folder)?;
     settings_at_first_launch(folder)?;
     settings_without_registration(folder)?;
     session_icons(folder)
@@ -97,6 +98,15 @@ fn home(folder: &Path) -> Result<(), String> {
     let data = tempfile::tempdir().map_err(say)?;
     let mut harness = open(Window::new(agent(data.path(), true)?));
     save(&mut harness, folder, "home")
+}
+
+/// The home while the keyboard hook lacks the permission of the OS: the permission panel.
+fn permission_missing(folder: &Path) -> Result<(), String> {
+    let data = tempfile::tempdir().map_err(say)?;
+    let agent = agent(data.path(), true)?;
+    agent.hook().permission(Permission::Missing);
+    let mut harness = open(Window::new(agent).with_permission_pane(|| {}));
+    save(&mut harness, folder, "home-permission-missing")
 }
 
 fn settings_at_first_launch(folder: &Path) -> Result<(), String> {
