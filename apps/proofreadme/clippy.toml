@@ -1,0 +1,9 @@
+# Clippy reads the nearest clippy.toml only, so the workspace settings are repeated here.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+disallowed-methods = [
+    { path = "egui_kittest::Harness::run", reason = "a window that repaints continuously (agent wakeups, a running proofread) makes `run` panic once max_steps is exceeded; use `run_ok`" },
+]

@@ -1,0 +1,36 @@
+[package]
+name = "proofreadme"
+description = "ProofReadMe: the agent that proofreads the selection on a double press of a key."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+default-run = "proofreadme"
+
+[lints]
+workspace = true
+
+[dependencies]
+proofreadme-core = { workspace = true }
+proofreadme-icon = { workspace = true }
+kairo = { workspace = true }
+thiserror = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+
+# The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
+# eframe uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["eframe"] }
+
+# Build script: the icon of the Windows executable, produced by code then embedded.
+[build-dependencies]
+proofreadme-icon = { workspace = true }
+
+# `winresource` calls the resource compiler of the Windows SDK (`rc.exe`).
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }

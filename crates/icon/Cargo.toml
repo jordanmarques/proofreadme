@@ -1,0 +1,13 @@
+[package]
+name = "proofreadme-icon"
+description = "The drawing of the ProofReadMe icon, produced by code. No dependency."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
