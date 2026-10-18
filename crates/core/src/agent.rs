@@ -65,9 +65,36 @@ pub struct State {
     pub provider_test: Option<ProviderTest>,
 }
 
+/// The look of the session icon of the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconState {
+    /// Listening for the trigger.
+    Idle,
+    /// Running a proofread.
+    Running,
+    /// Listening, after a proofread that failed: the cause is in [`State::last_failure`].
+    Alert,
+}
+
 impl State {
     fn initial() -> Self {
         Self { activity: Activity::Idle, last_failure: None, settings_requests: 0, settings_error: None, provider_test: None }
+    }
+
+    /// The look of the session icon for this state.
+    #[must_use]
+    pub fn icon(&self) -> IconState {
+        match self.activity {
+            Activity::Proofreading(_) => IconState::Running,
+            Activity::Idle if self.last_failure.is_some() => IconState::Alert,
+            Activity::Idle => IconState::Idle,
+        }
+    }
+
+    /// True if the menu of the session icon offers to cancel: only while a proofread runs.
+    #[must_use]
+    pub fn can_cancel(&self) -> bool {
+        matches!(self.activity, Activity::Proofreading(_))
     }
 }
 
@@ -294,6 +321,13 @@ impl Agent {
             self.shared.end(Some(ProofreadError::Thread(error.to_string())));
         }
     }
+
+    /// Cancel from the menu of the session icon, offered while a proofread runs
+    /// ([`State::can_cancel`]). Without a running proofread, it does nothing.
+    ///
+    /// For now the running proofread still goes to its end: stopping it, and the restoration of
+    /// the clipboard that goes with it, come with the failure paths of the proofread.
+    pub fn cancel(&self) {}
 
     /// Waits until no proofread is running, for at most the given delay. True if so.
     pub fn wait_until_idle(&self, delay: Duration) -> bool {
