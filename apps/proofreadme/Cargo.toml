@@ -18,6 +18,8 @@ kairo = { workspace = true }
 thiserror = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+dirs = { workspace = true }
+keyring = { workspace = true }
 
 # The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
 # eframe uses.
@@ -26,6 +28,9 @@ winit = { workspace = true }
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["eframe"] }
+tiny_http = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
 
 # Build script: the icon of the Windows executable, produced by code then embedded.
 [build-dependencies]
