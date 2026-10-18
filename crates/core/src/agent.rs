@@ -7,10 +7,11 @@ use std::time::Duration;
 
 use crate::error::ProofreadError;
 use crate::os::{KeyEvent, Os};
-use crate::proofread;
-use crate::settings::Settings;
+use crate::settings::{Settings, SettingsError};
+use crate::storage::Storage;
 use crate::trigger::Detector;
 use crate::wait;
+use crate::{proofread, provider};
 
 /// The step a running proofread is at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +33,21 @@ pub enum Activity {
     Proofreading(Step),
 }
 
+/// The sentence with mistakes that the Test of the provider sends through the proofreading
+/// prompt.
+pub const TEST_SENTENCE: &str = "Je suis aller au marcher hier, and it were a realy nice day.";
+
+/// Where the Test of the provider is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderTest {
+    /// The test sentence is with the provider.
+    Running,
+    /// The provider returned this correction of the test sentence.
+    Corrected(String),
+    /// The request failed, for this cause.
+    Failed(ProofreadError),
+}
+
 /// What the agent shows of itself: the window and the icon render it as is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
@@ -39,6 +55,20 @@ pub struct State {
     pub activity: Activity,
     /// The cause of the last failed proofread, cleared when a proofread starts.
     pub last_failure: Option<ProofreadError>,
+    /// How many times the agent asked for the settings to be shown: at a first launch, and at each
+    /// trigger without a usable provider. The window opens the settings each time it grows.
+    pub settings_requests: u64,
+    /// Why the last save (or Test) of the settings was refused, or why the key could not be read
+    /// at launch. Cleared by a successful save.
+    pub settings_error: Option<SettingsError>,
+    /// The last Test of the provider, if any.
+    pub provider_test: Option<ProviderTest>,
+}
+
+impl State {
+    fn initial() -> Self {
+        Self { activity: Activity::Idle, last_failure: None, settings_requests: 0, settings_error: None, provider_test: None }
+    }
 }
 
 /// The delays of the agent around the copy and the paste, which the applications perform
@@ -64,15 +94,22 @@ pub(crate) struct Shared {
     control: Mutex<Control>,
     /// Signalled at each change of the state.
     changed: Condvar,
+    /// Called at each change of the state (the window repaints).
+    wakeup: Mutex<Option<Wakeup>>,
     /// The OS, used by one proofread at a time.
     os: Mutex<Box<dyn Os>>,
     pub(crate) timing: Timing,
 }
 
+/// What the agent calls at each change of its state.
+type Wakeup = Arc<dyn Fn() + Send + Sync>;
+
 struct Control {
     state: State,
     settings: Settings,
     detector: Detector,
+    /// Where the settings are saved; `None` keeps them in memory only.
+    storage: Option<Storage>,
 }
 
 impl Shared {
@@ -86,10 +123,19 @@ impl Shared {
         self.os.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Tells the waiting threads and the observer that the state changed.
+    fn notify(&self) {
+        self.changed.notify_all();
+        let wakeup = self.wakeup.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(wakeup) = wakeup {
+            wakeup();
+        }
+    }
+
     /// Moves the running proofread to the given step.
     pub(crate) fn step(&self, step: Step) {
         self.control().state.activity = Activity::Proofreading(step);
-        self.changed.notify_all();
+        self.notify();
     }
 
     /// Ends the running proofread, with its failure if it failed.
@@ -98,7 +144,7 @@ impl Shared {
         control.state.activity = Activity::Idle;
         control.state.last_failure = failure;
         drop(control);
-        self.changed.notify_all();
+        self.notify();
     }
 }
 
@@ -126,15 +172,95 @@ impl Agent {
         Self::with_timing(os, settings, Timing::default())
     }
 
-    /// An agent with the given delays around the copy and the paste.
+    /// An agent with the given delays around the copy and the paste, whose settings live in
+    /// memory only.
     pub fn with_timing(os: impl Os, settings: Settings, timing: Timing) -> Self {
-        let control = Control { state: State { activity: Activity::Idle, last_failure: None }, settings, detector: Detector::new() };
-        Self { shared: Arc::new(Shared { control: Mutex::new(control), changed: Condvar::new(), os: Mutex::new(Box::new(os)), timing }) }
+        Self::build(os, settings, None, State::initial(), timing)
+    }
+
+    /// An agent running with the settings of the storage. At a first launch (no config file yet),
+    /// or without a usable provider, it asks for the settings at once.
+    pub fn load(os: impl Os, mut storage: Storage, timing: Timing) -> Self {
+        let first_launch = !storage.exists();
+        let (settings, unreadable) = storage.load();
+        let mut state = State::initial();
+        if first_launch || !settings.provider.is_usable() {
+            state.settings_requests = 1;
+        }
+        state.settings_error = unreadable.map(|error| SettingsError::KeyUnreadable(error.0));
+        Self::build(os, settings, Some(storage), state, timing)
+    }
+
+    fn build(os: impl Os, settings: Settings, storage: Option<Storage>, state: State, timing: Timing) -> Self {
+        let control = Control { state, settings, detector: Detector::new(), storage };
+        let shared = Shared { control: Mutex::new(control), changed: Condvar::new(), wakeup: Mutex::new(None), os: Mutex::new(Box::new(os)), timing };
+        Self { shared: Arc::new(shared) }
+    }
+
+    /// Calls `wakeup` at each change of the state, from whichever thread made it.
+    #[must_use]
+    pub fn on_change(self, wakeup: impl Fn() + Send + Sync + 'static) -> Self {
+        *self.shared.wakeup.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(wakeup));
+        self
     }
 
     /// The current state.
     pub fn state(&self) -> State {
         self.shared.control().state.clone()
+    }
+
+    /// The settings in force, API key included.
+    pub fn settings(&self) -> Settings {
+        self.shared.control().settings.clone()
+    }
+
+    /// Saves the settings, which take effect at once (a running proofread keeps those it started
+    /// with). A proofreading prompt without the placeholder is refused and nothing is written; a
+    /// refusal is also kept in the state.
+    pub fn save_settings(&self, settings: Settings) -> Result<(), SettingsError> {
+        let mut control = self.shared.control();
+        let saved = settings.check().and_then(|()| control.storage.as_mut().map_or(Ok(()), |storage| storage.save(&settings)));
+        if saved.is_ok() {
+            control.settings = settings;
+        }
+        control.state.settings_error = saved.clone().err();
+        drop(control);
+        self.shared.notify();
+        saved
+    }
+
+    /// Sends [`TEST_SENTENCE`] through these settings, on a thread of its own; the outcome lands in
+    /// [`State::provider_test`]. Ignored while a Test runs; refused, like a save, for a
+    /// proofreading prompt without the placeholder.
+    pub fn test_provider(&self, settings: &Settings) -> Result<(), SettingsError> {
+        let mut control = self.shared.control();
+        if let Err(refusal) = settings.check() {
+            control.state.settings_error = Some(refusal.clone());
+            drop(control);
+            self.shared.notify();
+            return Err(refusal);
+        }
+        if control.state.provider_test == Some(ProviderTest::Running) {
+            return Ok(());
+        }
+        control.state.provider_test = Some(ProviderTest::Running);
+        drop(control);
+        self.shared.notify();
+        let pending = provider::request_correction(settings, TEST_SENTENCE);
+        let shared = Arc::clone(&self.shared);
+        let spawned = thread::Builder::new().name("provider-test".to_owned()).spawn(move || {
+            let outcome = match pending.wait() {
+                Ok(correction) => ProviderTest::Corrected(correction),
+                Err(error) => ProviderTest::Failed(error),
+            };
+            shared.control().state.provider_test = Some(outcome);
+            shared.notify();
+        });
+        if let Err(error) = spawned {
+            self.shared.control().state.provider_test = Some(ProviderTest::Failed(ProofreadError::Thread(error.to_string())));
+            self.shared.notify();
+        }
+        Ok(())
     }
 
     /// Takes a key event from the keyboard hook. When it completes a trigger and no proofread is
@@ -146,12 +272,19 @@ impl Agent {
         if !control.detector.feed(&event, trigger) || control.state.activity != Activity::Idle {
             return;
         }
+        // Without a usable provider, the trigger shows the settings instead of sending a request.
+        if !control.settings.provider.is_usable() {
+            control.state.settings_requests = control.state.settings_requests.saturating_add(1);
+            drop(control);
+            self.shared.notify();
+            return;
+        }
         // The guard is taken here, on the trigger: a second trigger during the capture is ignored.
         control.state.activity = Activity::Proofreading(Step::Capturing);
         control.state.last_failure = None;
         let settings = control.settings.clone();
         drop(control);
-        self.shared.changed.notify_all();
+        self.shared.notify();
         let shared = Arc::clone(&self.shared);
         let spawned = thread::Builder::new().name("proofread".to_owned()).spawn(move || {
             let mut ending = Ending { shared: Arc::clone(&shared), failure: None };

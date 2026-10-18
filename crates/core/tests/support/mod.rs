@@ -173,6 +173,11 @@ impl Reply {
         Self { status: 200, body: body.to_string(), hold: None }
     }
 
+    /// An error status, with an error body.
+    pub fn status(status: u16) -> Self {
+        Self { status, body: r#"{"error":{"message":"refused"}}"#.to_owned(), hold: None }
+    }
+
     /// The same answer, held until the returned sender signals (or is dropped).
     pub fn held(self) -> (Self, Sender<()>) {
         let (release, hold) = mpsc::channel();
@@ -262,6 +267,7 @@ pub fn settings(provider: &LocalProvider) -> Settings {
         prompt: PROMPT.to_owned(),
         reasoning: true,
         timeout: DELAY,
+        launch_at_login: false,
     }
 }
 

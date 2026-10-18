@@ -13,12 +13,16 @@ mod os;
 mod proofread;
 mod provider;
 mod settings;
+mod storage;
 mod trigger;
 mod wait;
 
-pub use agent::{Activity, Agent, State, Step, Timing};
+pub use agent::{Activity, Agent, ProviderTest, State, Step, TEST_SENTENCE, Timing};
 pub use error::ProofreadError;
 pub use os::{ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Os, OsError};
 pub use provider::{PendingCorrection, request_correction};
-pub use settings::{PLACEHOLDER, Provider, Settings};
+pub use settings::{
+    DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_TIMEOUT, DEFAULT_TRIGGER, PLACEHOLDER, Provider, Settings, SettingsError,
+};
+pub use storage::{Keychain, KeychainError, MemoryKeychain, Storage};
 pub use trigger::DOUBLE_PRESS_WINDOW;
