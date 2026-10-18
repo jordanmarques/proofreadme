@@ -20,6 +20,10 @@ egui = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
 dirs = { workspace = true }
 keyring = { workspace = true }
+# session agent: icon, launch-at-login registration, single instance
+tray-icon = { workspace = true }
+auto-launch = { workspace = true }
+interprocess = { workspace = true }
 
 # The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
 # eframe uses.
@@ -27,7 +31,8 @@ keyring = { workspace = true }
 winit = { workspace = true }
 
 [dev-dependencies]
-egui_kittest = { workspace = true, features = ["eframe"] }
+# `wgpu` and `snapshot` serve the capture of the screens (`examples/screens.rs`).
+egui_kittest = { workspace = true, features = ["eframe", "wgpu", "snapshot"] }
 tiny_http = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }

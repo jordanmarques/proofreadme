@@ -33,6 +33,10 @@ tempfile = "3"
 winit = { version = "0.30", default-features = false }
 dirs = "6"
 keyring = "4"
+# session agent: icon, launch-at-login registration, single instance
+tray-icon = "0.26"
+auto-launch = "0.6"
+interprocess = "2"
 
 # tooling (resources of the Windows executable)
 winresource = "0.1"

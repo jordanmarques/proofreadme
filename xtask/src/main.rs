@@ -12,8 +12,10 @@ cargo xtask <command>
 ";
 
 /// The layers of the workspace: each crate and the crates it is not allowed to pull in.
-const LAYERS: &[(&str, &[&str])] =
-    &[("proofreadme-core", &["egui", "eframe", "kairo", "winit", "keyring", "dirs"]), ("kairo", &["proofreadme-core", "proofreadme"])];
+const LAYERS: &[(&str, &[&str])] = &[
+    ("proofreadme-core", &["egui", "eframe", "kairo", "winit", "keyring", "dirs", "tray-icon", "auto-launch", "interprocess"]),
+    ("kairo", &["proofreadme-core", "proofreadme"]),
+];
 
 fn main() -> ExitCode {
     let command = std::env::args().nth(1);

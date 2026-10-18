@@ -3,19 +3,31 @@
 //! This crate assembles the core (`proofreadme-core`) and the Kairo theme (`kairo`). The window
 //! shows the state of the agent and passes the commands on to it, dressed with nothing but the
 //! Kairo widgets and tokens. Two screens: the home of the agent and its settings.
+//!
+//! The agent lives in the session (ADR 0001): a session icon shows its state, a second launch
+//! brings its window back, closing the window hides it, and it registers itself at login.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod icon;
+mod instance;
 mod keychain;
+mod session;
 mod settings;
+mod startup;
 mod unwired;
 
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 use kairo::{Button, StatusLight, TitleCard, tokens};
-use proofreadme_core::{Activity, Agent, Settings, Storage, Timing};
+use proofreadme_core::{Activity, Agent, IconState, Settings, Storage, Timing};
 
+pub use icon::{IconError, IconPort, SessionIcon};
+pub use instance::{Instance, InstanceListener, announce};
 pub use keychain::SystemKeychain;
+pub use session::{Request, RequestSender};
+pub use startup::{BACKGROUND_ARGUMENT, IDENTIFIER, LoginRegistration, RegistrationError, SystemRegistration, system_registration};
 pub use unwired::UnwiredOs;
 
 /// The name of the application, shown in the title of the window.
@@ -43,6 +55,14 @@ enum Action {
     Back,
 }
 
+/// What the settings screen says about the session, beyond the state of the agent.
+pub(crate) struct SessionNotice<'a> {
+    /// Why the registration at login does not match the preference.
+    pub(crate) registration_error: Option<&'a str>,
+    /// True if the agent has no session icon: closing the window quits it.
+    pub(crate) no_icon: bool,
+}
+
 /// The window of the agent.
 pub struct Window {
     agent: Agent,
@@ -53,6 +73,14 @@ pub struct Window {
     followed_requests: u64,
     /// True since the last save succeeded, until the settings are edited again.
     saved: bool,
+    presence: session::Presence,
+    /// The registration at login; `None` remembers the preference without registering anything.
+    registration: Option<Box<dyn LoginRegistration>>,
+    /// Why the registration at login does not match the preference, if applicable.
+    registration_error: Option<String>,
+    /// The session icon, and the look it was last given.
+    icon: Option<Box<dyn IconPort>>,
+    shown_look: Option<(IconState, bool)>,
 }
 
 impl Window {
@@ -61,7 +89,111 @@ impl Window {
     #[must_use]
     pub fn new(agent: Agent) -> Self {
         let draft = agent.settings();
-        Self { agent, screen: Screen::Home, draft, followed_requests: 0, saved: false }
+        Self {
+            agent,
+            screen: Screen::Home,
+            draft,
+            followed_requests: 0,
+            saved: false,
+            presence: session::Presence::new(),
+            registration: None,
+            registration_error: None,
+            icon: None,
+            shown_look: None,
+        }
+    }
+
+    /// Gives the window the port of registration at login, and at once aligns the registration
+    /// with the preference of the settings: at first launch, the agent registers.
+    #[must_use]
+    pub fn with_login_registration(mut self, registration: impl LoginRegistration + 'static) -> Self {
+        self.registration = Some(Box::new(registration));
+        self.align_registration();
+        self
+    }
+
+    /// Tells the window why the agent cannot register at login: the settings say so.
+    #[must_use]
+    pub fn with_registration_error(mut self, cause: &RegistrationError) -> Self {
+        self.registration_error = Some(format!("Registration at login is impossible: {cause}"));
+        self
+    }
+
+    /// Gives the window the requests that come to it from elsewhere: the session icon, a second
+    /// launch of the application (see [`RequestSender`]).
+    #[must_use]
+    pub fn with_requests(mut self, requests: Receiver<Request>) -> Self {
+        self.presence.listen(requests);
+        self
+    }
+
+    /// Gives the window the session icon, which it keeps in step with the state of the agent.
+    #[must_use]
+    pub fn with_session_icon(mut self, icon: impl IconPort + 'static) -> Self {
+        self.icon = Some(Box::new(icon));
+        self
+    }
+
+    /// Launches the agent in the background: the window stays hidden as long as the agent does not
+    /// need the user and nobody asks to open it.
+    #[must_use]
+    pub fn in_background(mut self) -> Self {
+        self.presence.start_in_background();
+        self
+    }
+
+    /// Tells the window that the agent has no session icon: hiding it would make it impossible to
+    /// find, and nothing would allow quitting it any more. Closing the window then quits the agent,
+    /// and the settings say so.
+    #[must_use]
+    pub fn without_session_icon(mut self) -> Self {
+        self.presence.without_session_icon();
+        self
+    }
+
+    /// True since the window asked to be hidden (closed by the user, launched in the background),
+    /// until it asks to come back to the foreground.
+    #[must_use]
+    pub fn is_hidden(&self) -> bool {
+        self.presence.is_hidden()
+    }
+
+    /// Registers the agent at login or removes its registration, according to the preference of
+    /// the settings, and keeps the possible failure for the settings screen.
+    fn align_registration(&mut self) {
+        let Some(registration) = self.registration.as_mut() else { return };
+        let result = if self.agent.settings().launch_at_login {
+            registration.register().map_err(|cause| format!("Registration at login failed: {cause}"))
+        } else {
+            registration.unregister().map_err(|cause| format!("Removing the registration at login failed: {cause}"))
+        };
+        self.registration_error = result.err();
+    }
+
+    /// Handles what is asked of the window from the session icon or a second launch.
+    fn handle_requests(&mut self, context: &egui::Context) {
+        for request in self.presence.received_requests() {
+            match request {
+                Request::Open => self.presence.show(context),
+                Request::OpenSettings => {
+                    self.open_settings();
+                    self.presence.show(context);
+                }
+                Request::Cancel => self.agent.cancel(),
+                Request::Quit => self.presence.quit(context),
+            }
+        }
+    }
+
+    /// Gives the session icon the look of the state, when it changed.
+    fn update_icon(&mut self, state: &proofreadme_core::State) {
+        let look = (state.icon(), state.can_cancel());
+        if let Some(icon) = self.icon.as_mut()
+            && self.shown_look != Some(look)
+        {
+            icon.show(look.0, look.1);
+            self.shown_look = Some(look);
+        }
     }
 
     /// The agent of the window.
@@ -79,7 +211,13 @@ impl Window {
     fn act(&mut self, action: Action) {
         match action {
             Action::OpenSettings => self.open_settings(),
-            Action::Save => self.saved = self.agent.save_settings(self.draft.clone()).is_ok(),
+            Action::Save => {
+                let before = self.agent.settings().launch_at_login;
+                self.saved = self.agent.save_settings(self.draft.clone()).is_ok();
+                if self.saved && self.draft.launch_at_login != before {
+                    self.align_registration();
+                }
+            }
             // A refusal of the Test lands in the state of the agent, which the screen shows.
             Action::Test => {
                 let _ = self.agent.test_provider(&self.draft);
@@ -90,12 +228,22 @@ impl Window {
 }
 
 impl eframe::App for Window {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// The life of the agent, window shown or hidden: eframe calls `logic` before each frame, and
+    /// alone when the window is hidden.
+    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_requests(context);
         let state = self.agent.state();
-        if state.settings_requests > self.followed_requests {
+        let needs_the_user = state.settings_requests > self.followed_requests;
+        if needs_the_user {
             self.followed_requests = state.settings_requests;
             self.open_settings();
         }
+        self.presence.update(context, needs_the_user);
+        self.update_icon(&state);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let state = self.agent.state();
         // The Kairo fonts are only active at the frame that follows their installation: until
         // then, nothing is drawn.
         if !kairo::ready(ui) {
@@ -108,7 +256,10 @@ impl eframe::App for Window {
                 ui.spacing_mut().item_spacing = egui::vec2(tokens::SPACE_5, tokens::SPACE_5);
                 action = match self.screen {
                     Screen::Home => home(ui, &state),
-                    Screen::Settings => settings::show(ui, &mut self.draft, &state, self.saved),
+                    Screen::Settings => {
+                        let session = SessionNotice { registration_error: self.registration_error.as_deref(), no_icon: self.presence.has_no_icon() };
+                        settings::show(ui, &mut self.draft, &state, self.saved, &session)
+                    }
                 };
             });
         });
@@ -181,17 +332,61 @@ fn config_path() -> Result<PathBuf, LaunchError> {
     dirs::data_local_dir().map(|folder| folder.join(NAME).join("config.toml")).ok_or(LaunchError::NoDataFolder)
 }
 
-/// Opens the window of the agent, dressed with Kairo, and returns when it closes.
+/// Runs the session agent and returns when it quits.
+///
+/// If an agent is already running in the session, its window is brought back to the foreground and
+/// the function returns at once. Launched with [`BACKGROUND_ARGUMENT`] (which is what the
+/// registration at login does), the agent starts with its window hidden.
 pub fn run() -> Result<(), LaunchError> {
-    let storage = Storage::new(config_path()?, SystemKeychain);
+    let config = config_path()?;
+    let (sender, requests) = RequestSender::new();
+    // Nothing of what follows prevents the agent from starting: failing a single instance, an icon
+    // or a registration, it stays usable, and the cause is told on the error output or in the
+    // settings.
+    match config.parent().map(|folder| announce(folder, "agent")) {
+        Some(Ok(Instance::AlreadyRunning)) => return Ok(()),
+        Some(Ok(Instance::First(listener))) => {
+            let for_the_next_launches = sender.clone();
+            if let Err(error) = listener.listen(move || for_the_next_launches.send(Request::Open)) {
+                eprintln!("ProofReadMe: the single instance is not guaranteed: {error}");
+            }
+        }
+        Some(Err(error)) => eprintln!("ProofReadMe: the single instance is not guaranteed: {error}"),
+        None => {}
+    }
+    let in_background = std::env::args().any(|argument| argument == BACKGROUND_ARGUMENT);
+    let storage = Storage::new(config, SystemKeychain);
     eframe::run_native(
         NAME,
         window_options(),
-        Box::new(|creation| {
+        Box::new(move |creation| {
             kairo::install(&creation.egui_ctx);
+            sender.wake(creation.egui_ctx.clone());
             let context = creation.egui_ctx.clone();
             let agent = Agent::load(UnwiredOs, storage, Timing::default()).on_change(move || context.request_repaint());
-            Ok(Box::new(Window::new(agent)))
+            let mut window = Window::new(agent).with_requests(requests);
+            match system_registration() {
+                Ok(Some(registration)) => window = window.with_login_registration(registration),
+                Ok(None) => {}
+                Err(cause) => window = window.with_registration_error(&cause),
+            }
+            // The icon is created here: on the main thread, with the event loop already started.
+            match SessionIcon::install(&sender) {
+                Ok(icon) => {
+                    window = window.with_session_icon(icon);
+                    if in_background {
+                        window = window.in_background();
+                    }
+                }
+                // Without an icon, a hidden agent would be impossible to find and could no longer
+                // be quit: its window stays shown, even launched in the background, and closing it
+                // quits it.
+                Err(error) => {
+                    eprintln!("ProofReadMe: the session icon could not be installed: {error}. Closing the window quits ProofReadMe.");
+                    window = window.without_session_icon();
+                }
+            }
+            Ok(Box::new(window))
         }),
     )?;
     Ok(())
