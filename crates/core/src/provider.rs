@@ -2,7 +2,7 @@
 //! own thread so that the caller (the thread of a proofread, or the window for the Test button)
 //! never waits on the network.
 
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
@@ -37,18 +37,24 @@ impl PendingCorrection {
 /// Sends the selection inside the proofreading prompt to the provider, on a thread of its own.
 pub fn request_correction(settings: &Settings, selection: &str) -> PendingCorrection {
     let (sender, receiver) = mpsc::channel();
+    send_to(settings, selection, &sender, |correction| correction);
+    PendingCorrection { receiver }
+}
+
+/// Sends the selection to the provider on a thread of its own, which delivers the correction,
+/// wrapped, to `sender`. A receiver gone by then (a cancelled proofread) drops it.
+pub(crate) fn send_to<T: Send + 'static>(settings: &Settings, selection: &str, sender: &Sender<T>, wrap: fn(Result<String, ProofreadError>) -> T) {
     let settings = settings.clone();
     let selection = selection.to_owned();
     let spawned = thread::Builder::new().name("provider".to_owned()).spawn({
         let sender = sender.clone();
         move || {
-            let _ = sender.send(correct(&settings, &selection));
+            let _ = sender.send(wrap(correct(&settings, &selection)));
         }
     });
     if let Err(error) = spawned {
-        let _ = sender.send(Err(ProofreadError::Thread(error.to_string())));
+        let _ = sender.send(wrap(Err(ProofreadError::Thread(error.to_string()))));
     }
-    PendingCorrection { receiver }
 }
 
 #[derive(Deserialize)]

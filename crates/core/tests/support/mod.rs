@@ -9,7 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use proofreadme_core::{
-    Agent, ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Os, OsError, Provider, Settings, Timing,
+    Agent, ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Notification, Notifier, Os, OsError, Provider, Settings,
+    Timing,
 };
 
 /// The delay beyond which a test gives up waiting for the agent: never reached when all goes well.
@@ -89,6 +90,16 @@ impl Desktop {
     /// The text selected in the application, replaced by each paste.
     pub fn selection(&self) -> Option<String> {
         self.state().selection.clone()
+    }
+
+    /// The user brings another application to the foreground.
+    pub fn focus(&self, application: &str) {
+        self.state().foreground = application.to_owned();
+    }
+
+    /// The mark of the last write of the clipboard, `None` when written by the user.
+    pub fn mark(&self) -> Option<Mark> {
+        self.state().mark
     }
 }
 
@@ -317,6 +328,55 @@ impl Keyboard {
         self.tap(agent, Key::Modifier(modifier));
         self.tap(agent, Key::Modifier(modifier));
     }
+}
+
+/// A notification sink that records what the agent notifies.
+#[derive(Clone, Default)]
+pub struct Notifications {
+    sent: Arc<Mutex<Vec<Notification>>>,
+}
+
+impl Notifications {
+    pub fn sent(&self) -> Vec<Notification> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl Notifier for Notifications {
+    fn notify(&self, notification: &Notification) {
+        self.sent.lock().unwrap().push(notification.clone());
+    }
+}
+
+/// What an agent tells outside: its notifications and its log, in a folder of its own.
+pub struct Outside {
+    pub notifications: Notifications,
+    folder: tempfile::TempDir,
+}
+
+impl Outside {
+    pub fn new() -> Self {
+        Self { notifications: Notifications::default(), folder: tempfile::tempdir().unwrap() }
+    }
+
+    /// Where the agent writes its log.
+    pub fn log_path(&self) -> std::path::PathBuf {
+        self.folder.path().join("logs").join("agent.txt")
+    }
+
+    /// The agent log, empty if never written.
+    pub fn log(&self) -> String {
+        std::fs::read_to_string(self.log_path()).unwrap_or_default()
+    }
+
+    pub fn sent(&self) -> Vec<Notification> {
+        self.notifications.sent()
+    }
+}
+
+/// An agent whose notifications and log land in `outside`.
+pub fn watched_agent(desktop: &Desktop, settings: Settings, outside: &Outside) -> Agent {
+    agent(desktop, settings).with_notifier(outside.notifications.clone()).with_log(outside.log_path())
 }
 
 /// Waits until the agent has no proofread running.
