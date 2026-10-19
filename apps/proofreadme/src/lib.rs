@@ -12,6 +12,7 @@
 mod icon;
 mod instance;
 mod keychain;
+mod notifications;
 mod platform;
 mod session;
 mod settings;
@@ -27,6 +28,7 @@ use proofreadme_core::{Activity, Agent, IconState, Settings, Storage, Timing};
 pub use icon::{IconError, IconPort, SessionIcon};
 pub use instance::{Instance, InstanceListener, announce};
 pub use keychain::SystemKeychain;
+pub use notifications::SystemNotifier;
 pub use session::{Request, RequestSender};
 pub use startup::{BACKGROUND_ARGUMENT, IDENTIFIER, LoginRegistration, RegistrationError, SystemRegistration, system_registration};
 pub use unwired::UnwiredOs;
@@ -328,9 +330,20 @@ pub enum LaunchError {
     NoDataFolder,
 }
 
+/// The data folder of the application.
+fn data_folder() -> Result<PathBuf, LaunchError> {
+    dirs::data_local_dir().map(|folder| folder.join(NAME)).ok_or(LaunchError::NoDataFolder)
+}
+
 /// The location of the config: `config.toml` in the data folder of the application.
 fn config_path() -> Result<PathBuf, LaunchError> {
-    dirs::data_local_dir().map(|folder| folder.join(NAME).join("config.toml")).ok_or(LaunchError::NoDataFolder)
+    data_folder().map(|folder| folder.join("config.toml"))
+}
+
+/// The location of the agent log, one line per failed proofread: `logs/agent.txt` in the data
+/// folder of the application.
+fn log_path() -> Result<PathBuf, LaunchError> {
+    data_folder().map(|folder| folder.join("logs").join("agent.txt"))
 }
 
 /// Runs the session agent and returns when it quits.
@@ -340,6 +353,7 @@ fn config_path() -> Result<PathBuf, LaunchError> {
 /// registration at login does), the agent starts with its window hidden.
 pub fn run() -> Result<(), LaunchError> {
     let config = config_path()?;
+    let log = log_path()?;
     let (sender, requests) = RequestSender::new();
     // Nothing of what follows prevents the agent from starting: failing a single instance, an icon
     // or a registration, it stays usable, and the cause is told on the error output or in the
@@ -364,7 +378,10 @@ pub fn run() -> Result<(), LaunchError> {
             kairo::install(&creation.egui_ctx);
             sender.wake(creation.egui_ctx.clone());
             let context = creation.egui_ctx.clone();
-            let agent = Agent::load(platform::os(), storage, Timing::default()).on_change(move || context.request_repaint());
+            let agent = Agent::load(platform::os(), storage, Timing::default())
+                .with_notifier(SystemNotifier::new())
+                .with_log(log)
+                .on_change(move || context.request_repaint());
             platform::listen(&agent);
             let mut window = Window::new(agent).with_requests(requests);
             match system_registration() {

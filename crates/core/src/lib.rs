@@ -9,6 +9,8 @@
 mod agent;
 mod cleaning;
 mod error;
+mod log;
+mod notification;
 mod os;
 mod proofread;
 mod provider;
@@ -19,6 +21,7 @@ mod wait;
 
 pub use agent::{Activity, Agent, IconState, ProviderTest, State, Step, TEST_SENTENCE, Timing};
 pub use error::ProofreadError;
+pub use notification::{Notification, Notifier};
 pub use os::{ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Os, OsError};
 pub use provider::{PendingCorrection, request_correction};
 pub use settings::{

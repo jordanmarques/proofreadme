@@ -43,6 +43,8 @@ windows-sys = "0.61"
 arboard = "3.6"
 clipboard-win = "5.4"
 png = "0.18"
+# notifications of the agent (failures, correction left on the clipboard)
+notify-rust = "4"
 
 # tooling (resources of the Windows executable)
 winresource = "0.1"
