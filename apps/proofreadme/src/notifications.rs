@@ -52,9 +52,13 @@ impl Notifier for SystemNotifier {
         let spawned = thread::Builder::new().name("notification".to_owned()).spawn(move || {
             let mut toast = notify_rust::Notification::new();
             toast.summary(crate::NAME).body(&message);
+            // `notify-rust` only takes an AppUserModelID on Windows; elsewhere there is none.
+            #[cfg(windows)]
             if let Some(app_id) = app_id {
                 toast.app_id(app_id);
             }
+            #[cfg(not(windows))]
+            let _ = app_id;
             if let Err(error) = toast.show() {
                 eprintln!("ProofReadMe: a notification could not be shown: {error}");
             }
