@@ -14,6 +14,7 @@ repository = "https://github.com/jordanmarques/proofreadme"
 proofreadme-core = { path = "crates/core" }
 proofreadme-icon = { path = "crates/icon" }
 kairo = { path = "crates/kairo" }
+proofreadme-os-macos = { path = "crates/os-macos" }
 
 # interface
 egui = "0.36"
@@ -37,6 +38,14 @@ keyring = "4"
 tray-icon = "0.26"
 auto-launch = "0.6"
 interprocess = "2"
+
+# macOS adapters (crates/os-macos)
+arboard = "3.7"
+core-foundation = "0.10"
+core-graphics = "0.25"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSPasteboard", "NSRunningApplication", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent"] }
 
 # tooling (resources of the Windows executable)
 winresource = "0.1"

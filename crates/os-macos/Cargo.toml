@@ -1,0 +1,20 @@
+[package]
+name = "proofreadme-os-macos"
+description = "The macOS adapters of the OS port of ProofReadMe: keyboard hook, keystrokes, pasteboard, frontmost application, Accessibility permission. Empty elsewhere."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+proofreadme-core = { workspace = true }
+arboard = { workspace = true }
+core-foundation = { workspace = true }
+core-graphics = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }

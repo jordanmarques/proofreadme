@@ -29,6 +29,8 @@ interprocess = { workspace = true }
 # eframe uses.
 [target.'cfg(target_os = "macos")'.dependencies]
 winit = { workspace = true }
+# The adapters of the OS port: keyboard hook, keystrokes, pasteboard, Accessibility permission.
+proofreadme-os-macos = { workspace = true }
 
 [dev-dependencies]
 # `wgpu` and `snapshot` serve the capture of the screens (`examples/screens.rs`).

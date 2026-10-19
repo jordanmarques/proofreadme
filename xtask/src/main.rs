@@ -13,7 +13,12 @@ cargo xtask <command>
 
 /// The layers of the workspace: each crate and the crates it is not allowed to pull in.
 const LAYERS: &[(&str, &[&str])] = &[
-    ("proofreadme-core", &["egui", "eframe", "kairo", "winit", "keyring", "dirs", "tray-icon", "auto-launch", "interprocess"]),
+    (
+        "proofreadme-core",
+        &["egui", "eframe", "kairo", "winit", "keyring", "dirs", "tray-icon", "auto-launch", "interprocess", "proofreadme-os-macos"],
+    ),
+    // The platform adapters stay thin: no window, no theme, no application.
+    ("proofreadme-os-macos", &["egui", "eframe", "kairo", "proofreadme"]),
     ("kairo", &["proofreadme-core", "proofreadme"]),
 ];
 
