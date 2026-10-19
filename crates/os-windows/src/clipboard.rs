@@ -103,10 +103,8 @@ fn dib_v5(image: &Image) -> Result<Vec<u8>, OsError> {
     dib.extend_from_slice(&4u32.to_le_bytes()); // LCS_GM_IMAGES
     dib.extend_from_slice(&[0; 12]); // profile, reserved
     for line in image.rgba.chunks_exact(row.max(1)).rev() {
-        for pixel in line.chunks_exact(4) {
-            if let [red, green, blue, alpha] = *pixel {
-                dib.extend_from_slice(&[blue, green, red, alpha]);
-            }
+        for &[red, green, blue, alpha] in line.as_chunks::<4>().0 {
+            dib.extend_from_slice(&[blue, green, red, alpha]);
         }
     }
     Ok(dib)

@@ -1,0 +1,6 @@
+# The toolchain of the repository, the `rust-version` of the workspace: local builds and the CI run
+# the same rustc and the same clippy, so a lint added by a newer stable cannot break the CI alone.
+# Raise it together with `rust-version` in `Cargo.toml`.
+[toolchain]
+channel = "1.95"
+components = ["rustfmt", "clippy"]
