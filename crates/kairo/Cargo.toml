@@ -1,0 +1,22 @@
+[package]
+name = "kairo"
+description = "The Kairo design system ported to an egui theme and widgets. Knows nothing about Hikyaku."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+egui = { workspace = true }
+
+[dev-dependencies]
+# The gallery opens a window with eframe and is captured headless with egui_kittest.
+eframe = { workspace = true, features = ["wgpu", "accesskit"] }
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+
+[[example]]
+name = "gallery"

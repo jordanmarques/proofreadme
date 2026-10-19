@@ -1,0 +1,55 @@
+[package]
+name = "proofreadme"
+description = "ProofReadMe: the agent that proofreads the selection on a double press of a key."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+default-run = "proofreadme"
+
+[lints]
+workspace = true
+
+[dependencies]
+proofreadme-core = { workspace = true }
+proofreadme-icon = { workspace = true }
+kairo = { workspace = true }
+thiserror = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+dirs = { workspace = true }
+keyring = { workspace = true }
+# session agent: icon, launch-at-login registration, single instance
+tray-icon = { workspace = true }
+auto-launch = { workspace = true }
+interprocess = { workspace = true }
+notify-rust = { workspace = true }
+
+# The adapters of the OS port on Windows.
+[target.'cfg(windows)'.dependencies]
+proofreadme-os-windows = { workspace = true }
+# The AppUserModelID the notifications are sent under, registered in the user's registry.
+windows-registry = { workspace = true }
+
+# The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
+# eframe uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = { workspace = true }
+# The adapters of the OS port: keyboard hook, keystrokes, pasteboard, Accessibility permission.
+proofreadme-os-macos = { workspace = true }
+
+[dev-dependencies]
+# `wgpu` and `snapshot` serve the capture of the screens (`examples/screens.rs`).
+egui_kittest = { workspace = true, features = ["eframe", "wgpu", "snapshot"] }
+tiny_http = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+
+# Build script: the icon of the Windows executable, produced by code then embedded.
+[build-dependencies]
+proofreadme-icon = { workspace = true }
+
+# `winresource` calls the resource compiler of the Windows SDK (`rc.exe`).
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# `cargo xtask package`: the icon of the macOS bundle, drawn by code then encoded in PNG.
+proofreadme-icon = { workspace = true }
+png = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
