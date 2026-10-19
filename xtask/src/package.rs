@@ -1,9 +1,11 @@
 //! `cargo xtask package`: builds ProofReadMe in release and produces the package of the host OS in
 //! `dist/`, either the `ProofReadMe.app` bundle (macOS) or `ProofReadMe.exe` (Windows).
 //!
-//! The macOS bundle is signed with a self-signed certificate of the login keychain (ADR 0004): the
+//! The macOS bundle is signed with a self-signed certificate of the keychain (ADR 0004): the
 //! Accessibility permission is tied to the signature, and a stable certificate keeps it granted
-//! across updates. No installer, no Developer ID, no notarisation.
+//! across updates. No Developer ID, no notarisation. On macOS `--dmg` also wraps the bundle in a
+//! disk image, `dist/ProofReadMe.dmg`; on Windows `--msi` also wraps the executable in an
+//! installer, `dist/ProofReadMe.msi`, built with WiX.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,7 +19,8 @@ const NAME: &str = "ProofReadMe";
 const BINARY: &str = "proofreadme";
 
 /// The identifier of the macOS bundle. It is also the `Label` of the LaunchAgent the application
-/// registers (`proofreadme::IDENTIFIER`): a test checks that the two stay equal.
+/// registers (`proofreadme::IDENTIFIER`), and the AppUserModelID its Windows toasts are sent under:
+/// a test checks that they stay equal.
 const IDENTIFIER: &str = "io.github.jordanmarques.proofreadme";
 
 /// The oldest macOS version targeted: the first one on Apple silicon. It is given to the build
@@ -33,44 +36,98 @@ const DEFAULT_IDENTITY: &str = "ProofReadMe Signing";
 /// The option that asks for an ad hoc signature instead of the certificate.
 const AD_HOC: &str = "--ad-hoc";
 
+/// The option that asks for a universal macOS bundle (Apple silicon and Intel).
+const UNIVERSAL: &str = "--universal";
+
+/// The option that asks for a macOS disk image holding the bundle.
+const DMG: &str = "--dmg";
+
+/// The option that asks for a Windows installer holding the executable.
+const MSI: &str = "--msi";
+
+/// The two architectures of a universal macOS executable.
+const MACOS_TARGETS: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+
+/// The version of the WiX toolset that builds the installer (`dotnet tool install --global wix`),
+/// and of its extension that closes the running agent.
+const WIX_VERSION: &str = "5.0.2";
+
+/// The upgrade code of the installer: the identity shared by all its versions, through which a
+/// new version replaces the installed one. It must never change.
+const UPGRADE_CODE: &str = "bbaac658-803d-4940-a7e2-9a4c3f298bb8";
+
+/// The identity of the installed executable. A per-user file is tracked through a registry value,
+/// which keeps WiX from deriving this identity by itself; like the upgrade code, it never changes.
+const EXECUTABLE_COMPONENT: &str = "61649b70-3b13-4f29-ae6c-d289cd00531e";
+
+/// The manufacturer the installer declares, shown in "Installed apps".
+const MANUFACTURER: &str = "Jordan Marques";
+
+/// How many times the disk image is attempted: `hdiutil` sometimes fails with "Resource busy" on
+/// a machine that is indexing the staging folder.
+const DMG_ATTEMPTS: u32 = 3;
+
 /// The share of the side left transparent around the tile in the icon of the bundle, as macOS
 /// expects of its application icons.
 const ICON_MARGIN: f32 = 0.1;
 
+/// What `cargo xtask package` was asked for.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Options {
+    ad_hoc: bool,
+    universal: bool,
+    dmg: bool,
+    msi: bool,
+}
+
 /// How the macOS bundle is signed.
 #[derive(Debug, PartialEq, Eq)]
 enum Signature {
-    /// With the self-signed certificate of this name, from the login keychain (ADR 0004).
+    /// With the self-signed certificate of this name, from the keychain (ADR 0004).
     Certificate(String),
     /// Ad hoc, with no identity: the Accessibility permission is lost at every update. Only on
-    /// request (`--ad-hoc`), for a machine without the certificate such as the CI.
+    /// request (`--ad-hoc`), for a machine without the certificate.
     AdHoc,
 }
 
 /// Builds ProofReadMe in release, then produces the package of the host OS in `dist/`.
 ///
 /// On macOS the bundle is signed with the certificate named by `PROOFREADME_SIGNING_IDENTITY`
-/// (`ProofReadMe Signing` by default), or ad hoc with `--ad-hoc`.
+/// (`ProofReadMe Signing` by default), or ad hoc with `--ad-hoc`; `--universal` gives it one
+/// executable for both architectures (both Rust targets must be installed), and `--dmg` also
+/// writes `dist/ProofReadMe.dmg`, a disk image holding the bundle next to a link to
+/// `/Applications`. On Windows, `--msi` also writes `dist/ProofReadMe.msi`, the installer of the
+/// executable (the `wix` tool must be installed).
 pub fn package(arguments: &[String]) -> Result<(), String> {
-    let signature = signature(arguments, std::env::var(IDENTITY_VARIABLE).ok())?;
+    let options = options(arguments)?;
+    let signature = signature(&options, std::env::var(IDENTITY_VARIABLE).ok());
     let root = crate::root();
     let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     let dist = root.join("dist");
     let product = if cfg!(target_os = "macos") {
+        if options.msi {
+            return Err(format!("package: {MSI} only exists on Windows"));
+        }
         // Checked before the build: a missing certificate is known at once.
         if let Signature::Certificate(name) = &signature {
             certificate_in_the_keychain(name)?;
         }
-        build()?;
-        let bundle = assemble_the_bundle(&dist, &target.join("release").join(BINARY), env!("CARGO_PKG_VERSION"))?;
+        let executable = if options.universal {
+            universal_executable(&target)?
+        } else {
+            build(None)?;
+            target.join("release").join(BINARY)
+        };
+        let bundle = assemble_the_bundle(&dist, &executable, env!("CARGO_PKG_VERSION"))?;
         sign(&bundle, &signature)?;
-        bundle
+        if options.dmg { disk_image(&dist, &bundle, &target.join("dmg"))? } else { bundle }
     } else if cfg!(windows) {
-        if signature == Signature::AdHoc {
-            return Err(format!("package: {AD_HOC} only exists on macOS"));
+        if options.ad_hoc || options.universal || options.dmg {
+            return Err(format!("package: {AD_HOC}, {UNIVERSAL} and {DMG} only exist on macOS"));
         }
-        build()?;
-        copy_the_exe(&dist, &target.join("release").join(format!("{BINARY}.exe")))?
+        build(None)?;
+        let exe = copy_the_exe(&dist, &target.join("release").join(format!("{BINARY}.exe")))?;
+        if options.msi { installer(&dist, &exe, &target.join("msi"), env!("CARGO_PKG_VERSION"))? } else { exe }
     } else {
         return Err("package: only macOS and Windows have a package".to_owned());
     };
@@ -78,23 +135,33 @@ pub fn package(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// How the bundle is to be signed, after the arguments of `package` (only `--ad-hoc`, at most
-/// once) and the value of [`IDENTITY_VARIABLE`]. An empty variable counts as unset.
-fn signature(arguments: &[String], variable: Option<String>) -> Result<Signature, String> {
-    let mut ad_hoc = false;
+/// Reads the arguments of `package`: any of `--ad-hoc`, `--universal`, `--dmg` and `--msi`, each
+/// at most once.
+fn options(arguments: &[String]) -> Result<Options, String> {
+    let mut options = Options::default();
     for argument in arguments {
-        if argument != AD_HOC {
-            return Err(format!("package: unknown argument `{argument}`; the only option is {AD_HOC}"));
-        }
-        if std::mem::replace(&mut ad_hoc, true) {
+        let option = match argument.as_str() {
+            AD_HOC => &mut options.ad_hoc,
+            UNIVERSAL => &mut options.universal,
+            DMG => &mut options.dmg,
+            MSI => &mut options.msi,
+            unknown => return Err(format!("package: unknown argument `{unknown}`; the options are {AD_HOC}, {UNIVERSAL}, {DMG} and {MSI}")),
+        };
+        if std::mem::replace(option, true) {
             return Err(format!("package: `{argument}` is given twice"));
         }
     }
-    if ad_hoc {
-        return Ok(Signature::AdHoc);
+    Ok(options)
+}
+
+/// How the bundle is to be signed, after the options of `package` and the value of
+/// [`IDENTITY_VARIABLE`]. An empty variable counts as unset.
+fn signature(options: &Options, variable: Option<String>) -> Signature {
+    if options.ad_hoc {
+        return Signature::AdHoc;
     }
     let name = variable.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty());
-    Ok(Signature::Certificate(name.unwrap_or_else(|| DEFAULT_IDENTITY.to_owned())))
+    Signature::Certificate(name.unwrap_or_else(|| DEFAULT_IDENTITY.to_owned()))
 }
 
 /// True if the output of `security find-identity -p codesigning` lists a certificate of exactly
@@ -125,7 +192,7 @@ fn certificate_in_the_keychain(name: &str) -> Result<(), String> {
 }
 
 /// Signs the bundle. The signature covers the Info.plist and the resources, which the linker's own
-/// signature of the executable does not.
+/// signature of the executable does not, and it is required after `lipo` rewrote the executable.
 fn sign(bundle: &Path, signature: &Signature) -> Result<(), String> {
     let mut codesign = Command::new("codesign");
     match signature {
@@ -144,14 +211,37 @@ fn sign(bundle: &Path, signature: &Signature) -> Result<(), String> {
     }
 }
 
-/// `cargo build --release` of the application, for the architecture of the machine.
-fn build() -> Result<(), String> {
+/// `cargo build --release` of the application, for the given Rust target or, without one, for the
+/// architecture of the machine.
+fn build(rust_target: Option<&str>) -> Result<(), String> {
     let mut command = crate::cargo();
     command.args(["build", "--release", "--locked", "-p", BINARY]);
+    let mut description = format!("cargo build --release --locked -p {BINARY}");
+    if let Some(rust_target) = rust_target {
+        command.args(["--target", rust_target]);
+        description.push_str(&format!(" --target {rust_target}"));
+    }
     if cfg!(target_os = "macos") {
         command.env("MACOSX_DEPLOYMENT_TARGET", MACOS_MINIMUM);
     }
-    crate::run(&mut command, &format!("cargo build --release --locked -p {BINARY}"))
+    crate::run(&mut command, &description)
+}
+
+/// Builds the application for both macOS architectures and merges the two executables into one
+/// with `lipo`. Returns the path of the universal executable.
+fn universal_executable(target: &Path) -> Result<PathBuf, String> {
+    let mut slices = Vec::new();
+    for rust_target in MACOS_TARGETS {
+        build(Some(rust_target))?;
+        slices.push(target.join(rust_target).join("release").join(BINARY));
+    }
+    let folder = target.join("universal");
+    fs::create_dir_all(&folder).map_err(|e| format!("creating {}: {e}", folder.display()))?;
+    let universal = folder.join(BINARY);
+    let mut lipo = Command::new("lipo");
+    lipo.arg("-create").arg("-output").arg(&universal).args(&slices);
+    crate::run(&mut lipo, "lipo -create (universal executable)")?;
+    Ok(universal)
 }
 
 /// Assembles `dist/ProofReadMe.app` around the given executable and returns the path of the bundle.
@@ -176,12 +266,158 @@ fn assemble_the_bundle(dist: &Path, executable: &Path, version: &str) -> Result<
     Ok(bundle)
 }
 
+/// Lays out what the disk image shows when it is opened: the bundle and a link to `/Applications`
+/// to drag it onto. A previous staging folder is replaced.
+fn stage_the_disk_image(staging: &Path, bundle: &Path) -> Result<(), String> {
+    if staging.exists() {
+        fs::remove_dir_all(staging).map_err(|e| format!("removing {}: {e}", staging.display()))?;
+    }
+    fs::create_dir_all(staging).map_err(|e| format!("creating {}: {e}", staging.display()))?;
+    // `ditto` copies the bundle with its signature, permissions and links intact.
+    let mut ditto = Command::new("ditto");
+    ditto.arg(bundle).arg(staging.join(format!("{NAME}.app")));
+    crate::run(&mut ditto, "ditto (bundle into the disk image staging folder)")?;
+    link_to_applications(&staging.join("Applications"))
+}
+
+#[cfg(unix)]
+fn link_to_applications(link: &Path) -> Result<(), String> {
+    std::os::unix::fs::symlink("/Applications", link).map_err(|e| format!("linking {}: {e}", link.display()))
+}
+
+/// Outside Unix there is no disk image to stage.
+#[cfg(not(unix))]
+fn link_to_applications(_link: &Path) -> Result<(), String> {
+    Err("package: a disk image can only be staged on macOS".to_owned())
+}
+
+/// Writes `dist/ProofReadMe.dmg`, a compressed read-only disk image of the bundle, and returns its
+/// path. A previous image is replaced.
+fn disk_image(dist: &Path, bundle: &Path, staging: &Path) -> Result<PathBuf, String> {
+    stage_the_disk_image(staging, bundle)?;
+    let image = dist.join(format!("{NAME}.dmg"));
+    let mut last_error = String::new();
+    for attempt in 1..=DMG_ATTEMPTS {
+        let mut hdiutil = Command::new("hdiutil");
+        hdiutil.args(["create", "-volname", NAME, "-fs", "HFS+", "-format", "UDZO", "-ov", "-srcfolder"]).arg(staging).arg(&image);
+        match crate::run(&mut hdiutil, &format!("hdiutil create (attempt {attempt} of {DMG_ATTEMPTS})")) {
+            Ok(()) => return Ok(image),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
 /// Copies the Windows executable to `dist/ProofReadMe.exe` and returns this path.
 fn copy_the_exe(dist: &Path, executable: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(dist).map_err(|e| format!("creating {}: {e}", dist.display()))?;
     let exe = dist.join(format!("{NAME}.exe"));
     copy(executable, &exe)?;
     Ok(exe)
+}
+
+/// Writes `dist/ProofReadMe.msi`, the installer of the given executable, and returns its path. The
+/// source of the installer and the icon it shows are written to the staging folder first. A
+/// previous installer is replaced.
+fn installer(dist: &Path, exe: &Path, staging: &Path, version: &str) -> Result<PathBuf, String> {
+    let msi_version = msi_version(version)?;
+    fs::create_dir_all(staging).map_err(|e| format!("creating {}: {e}", staging.display()))?;
+    let source = staging.join(format!("{NAME}.wxs"));
+    let icon = staging.join(format!("{NAME}.ico"));
+    write(&source, wxs(&msi_version).as_bytes())?;
+    write(&icon, &proofreadme_icon::ico())?;
+    // Adding the extension again is harmless: it is how a fresh machine gets it.
+    let extension = format!("WixToolset.Util.wixext/{WIX_VERSION}");
+    let mut add = Command::new("wix");
+    add.args(["extension", "add", "--global", &extension]);
+    crate::run(&mut add, &format!("wix extension add --global {extension}"))
+        .map_err(|error| format!("{error}\nthe installer is built with WiX: dotnet tool install --global wix --version {WIX_VERSION}"))?;
+    let msi = dist.join(format!("{NAME}.msi"));
+    let mut wix = Command::new("wix");
+    wix.args(["build", "-arch", "x64", "-pdbtype", "none", "-ext", &extension])
+        .arg("-d")
+        .arg(format!("Exe={}", exe.display()))
+        .arg("-d")
+        .arg(format!("Icon={}", icon.display()))
+        .arg("-o")
+        .arg(&msi)
+        .arg(&source);
+    crate::run(&mut wix, "wix build (installer)")?;
+    Ok(msi)
+}
+
+/// The version of the installer. Windows Installer only knows `major.minor.build`, at most 255,
+/// 255 and 65535: a pre-release (`1.2.0-rc.1`) takes the version it precedes.
+fn msi_version(version: &str) -> Result<String, String> {
+    let release = version.split(['-', '+']).next().unwrap_or(version);
+    let fields: Vec<&str> = release.split('.').collect();
+    let within = |field: &&str, limit: u32| field.parse::<u32>().is_ok_and(|number| number <= limit);
+    if fields.len() == 3 && fields.iter().zip([255, 255, 65535]).all(|(field, limit)| within(field, limit)) {
+        Ok(release.to_owned())
+    } else {
+        Err(format!("package: `{version}` cannot be the version of a Windows installer (at most 255.255.65535)"))
+    }
+}
+
+/// The source of the installer, in the WiX format. It installs for the current user only, without
+/// administrator rights, in `%LOCALAPPDATA%\Programs\ProofReadMe`: the stable path the registration
+/// at login records. A shortcut goes in the Start menu, carrying the AppUserModelID the toasts are
+/// sent under. A newer version replaces the installed one.
+///
+/// The running agent holds its executable open: it is stopped before the files are replaced, then
+/// launched again once an interactive installation is done, in the background after an update. On
+/// uninstall, its registration at login goes with it.
+fn wxs(msi_version: &str) -> String {
+    format!(
+        r#"<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="{NAME}" Manufacturer="{MANUFACTURER}" Version="{msi_version}" UpgradeCode="{UPGRADE_CODE}" Scope="perUser">
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of {NAME} is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="{NAME}.ico" SourceFile="$(Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="{NAME}.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="{NAME}">
+          <Component Id="Executable" Guid="{EXECUTABLE_COMPONENT}">
+            <File Id="Executable" Source="$(Exe)" Name="{NAME}.exe" KeyPath="no" />
+            <RegistryValue Root="HKCU" Key="Software\{NAME}\Installer" Name="Executable" Type="integer" Value="1" KeyPath="yes" />
+            <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+            <RemoveFolder Id="RemoveProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="Shortcut">
+        <Shortcut Id="Shortcut" Name="{NAME}" Target="[INSTALLFOLDER]{NAME}.exe" WorkingDirectory="INSTALLFOLDER" Icon="{NAME}.ico">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="{IDENTIFIER}" />
+        </Shortcut>
+        <RegistryValue Root="HKCU" Key="Software\{NAME}\Installer" Name="Shortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <util:CloseApplication Id="StopTheAgent" Target="{NAME}.exe" TerminateProcess="0" RebootPrompt="no" />
+
+    <CustomAction Id="Launch" FileRef="Executable" ExeCommand=" " Return="asyncNoWait" />
+    <CustomAction Id="LaunchInTheBackground" FileRef="Executable" ExeCommand="--background" Return="asyncNoWait" />
+    <CustomAction Id="Unregister" Directory="INSTALLFOLDER" ExeCommand='"[System64Folder]reg.exe" delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v {NAME} /f' Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="Unregister" Before="RemoveFiles" Condition='REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE' />
+      <Custom Action="Launch" After="InstallFinalize" Condition="NOT REMOVE AND UILevel &gt;= 3 AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="LaunchInTheBackground" After="InstallFinalize" Condition="NOT REMOVE AND UILevel &gt;= 3 AND WIX_UPGRADE_DETECTED" />
+    </InstallExecuteSequence>
+
+    <Feature Id="Main">
+      <ComponentRef Id="Executable" />
+      <ComponentRef Id="Shortcut" />
+    </Feature>
+  </Package>
+</Wix>
+"#
+    )
 }
 
 fn copy(source: &Path, destination: &Path) -> Result<(), String> {
@@ -306,20 +542,36 @@ mod tests {
 
     #[test]
     fn the_bundle_is_signed_with_the_default_certificate_unless_the_variable_names_another() {
-        assert_eq!(signature(&[], None), Ok(Signature::Certificate("ProofReadMe Signing".to_owned())));
-        assert_eq!(signature(&[], Some("Jordan Code".to_owned())), Ok(Signature::Certificate("Jordan Code".to_owned())));
-        assert_eq!(signature(&[], Some("  ".to_owned())), Ok(Signature::Certificate("ProofReadMe Signing".to_owned())));
+        let options = Options::default();
+
+        assert_eq!(signature(&options, None), Signature::Certificate("ProofReadMe Signing".to_owned()));
+        assert_eq!(signature(&options, Some("Jordan Code".to_owned())), Signature::Certificate("Jordan Code".to_owned()));
+        assert_eq!(signature(&options, Some("  ".to_owned())), Signature::Certificate("ProofReadMe Signing".to_owned()));
     }
 
     #[test]
     fn the_ad_hoc_signature_is_only_given_on_request() {
-        assert_eq!(signature(&arguments(&["--ad-hoc"]), Some("Jordan Code".to_owned())), Ok(Signature::AdHoc));
+        let options = options(&arguments(&["--ad-hoc"])).unwrap();
+
+        assert_eq!(signature(&options, Some("Jordan Code".to_owned())), Signature::AdHoc);
+    }
+
+    #[test]
+    fn package_takes_its_options_in_any_order() {
+        assert_eq!(options(&[]), Ok(Options::default()));
+        assert_eq!(options(&arguments(&["--universal"])), Ok(Options { universal: true, ..Options::default() }));
+        assert_eq!(options(&arguments(&["--dmg", "--universal"])), Ok(Options { universal: true, dmg: true, ..Options::default() }));
+        assert_eq!(options(&arguments(&["--dmg", "--ad-hoc", "--universal"])), Ok(Options { ad_hoc: true, universal: true, dmg: true, msi: false }));
+        assert_eq!(options(&arguments(&["--msi"])), Ok(Options { msi: true, ..Options::default() }));
     }
 
     #[test]
     fn package_refuses_an_unknown_or_repeated_argument() {
-        assert!(signature(&arguments(&["--adhoc"]), None).unwrap_err().contains("--adhoc"));
-        assert!(signature(&arguments(&["--ad-hoc", "--ad-hoc"]), None).is_err());
+        assert!(options(&arguments(&["--adhoc"])).unwrap_err().contains("--adhoc"));
+        assert!(options(&arguments(&["--universal", "extra"])).is_err());
+        for repeated in ["--ad-hoc", "--universal", "--dmg", "--msi"] {
+            assert!(options(&arguments(&[repeated, repeated])).is_err(), "{repeated}");
+        }
     }
 
     /// The output of `security find-identity -p codesigning` on a machine holding the certificate,
@@ -482,5 +734,64 @@ Policy: Code Signing
 
         assert_eq!(exe, dist.join("ProofReadMe.exe"));
         assert_eq!(fs::read(exe).unwrap(), b"test binary");
+    }
+
+    #[test]
+    fn the_installer_version_is_the_release_the_version_designates() {
+        assert_eq!(msi_version("1.2.3"), Ok("1.2.3".to_owned()));
+        assert_eq!(msi_version("0.1.1"), Ok("0.1.1".to_owned()));
+        assert_eq!(msi_version("1.2.0-rc.1"), Ok("1.2.0".to_owned()), "a pre-release takes the version it precedes");
+        assert_eq!(msi_version("255.255.65535"), Ok("255.255.65535".to_owned()));
+    }
+
+    #[test]
+    fn a_version_windows_installer_cannot_carry_is_refused() {
+        for version in ["256.0.0", "1.256.0", "1.2.65536", "1.2", "1.2.3.4", "1.x.3"] {
+            assert!(msi_version(version).is_err(), "{version}");
+        }
+    }
+
+    #[test]
+    fn the_installer_keeps_its_upgrade_code_and_installs_for_the_user_where_the_login_registration_points() {
+        let source = wxs("1.2.3");
+
+        assert!(source.contains(r#"UpgradeCode="bbaac658-803d-4940-a7e2-9a4c3f298bb8""#), "the identity across versions never changes");
+        assert!(source.contains(r#"Version="1.2.3""#));
+        assert!(source.contains(r#"Scope="perUser""#), "no administrator rights");
+        assert!(source.contains("<MajorUpgrade "), "a new version replaces the installed one");
+        // %LOCALAPPDATA%\Programs\ProofReadMe\ProofReadMe.exe, the path the README names.
+        assert!(source.contains(r#"<StandardDirectory Id="LocalAppDataFolder">"#));
+        assert!(source.contains(r#"<Directory Id="ProgramsFolder" Name="Programs">"#));
+        assert!(source.contains(r#"<Directory Id="INSTALLFOLDER" Name="ProofReadMe">"#));
+        assert!(source.contains(r#"Name="ProofReadMe.exe""#));
+        // On uninstall, the value the agent writes to the `Run` key goes too.
+        assert!(source.contains(r"CurrentVersion\Run /v ProofReadMe /f"));
+    }
+
+    #[test]
+    fn the_start_menu_shortcut_carries_the_app_user_model_id_of_the_toasts() {
+        let source = wxs("1.2.3");
+
+        assert!(source.contains(r#"<ShortcutProperty Key="System.AppUserModel.ID" Value="io.github.jordanmarques.proofreadme" />"#));
+        // The toasts are sent under `crate::IDENTIFIER`, the constant checked against IDENTIFIER above.
+        let notifications = fs::read_to_string(crate::root().join("apps/proofreadme/src/notifications.rs")).unwrap();
+        assert!(notifications.contains("Ok(()) => Some(crate::IDENTIFIER)"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_disk_image_shows_the_bundle_next_to_a_link_to_applications() {
+        let folder = tempfile::tempdir().unwrap();
+        let bundle = assemble_the_bundle(&folder.path().join("dist"), &fake_executable(folder.path(), "proofreadme"), "1.2.3").unwrap();
+        let staging = folder.path().join("staging");
+        fs::create_dir_all(staging.join("left over from a previous run")).unwrap();
+
+        stage_the_disk_image(&staging, &bundle).unwrap();
+
+        let mut shown: Vec<String> = fs::read_dir(&staging).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        shown.sort();
+        assert_eq!(shown, ["Applications", "ProofReadMe.app"]);
+        assert_eq!(fs::read_link(staging.join("Applications")).unwrap(), Path::new("/Applications"));
+        assert_eq!(fs::read(staging.join("ProofReadMe.app/Contents/MacOS/ProofReadMe")).unwrap(), b"test binary");
     }
 }
