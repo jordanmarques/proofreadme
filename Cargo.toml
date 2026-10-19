@@ -15,6 +15,7 @@ proofreadme-core = { path = "crates/core" }
 proofreadme-icon = { path = "crates/icon" }
 kairo = { path = "crates/kairo" }
 proofreadme-os-macos = { path = "crates/os-macos" }
+proofreadme-os-windows = { path = "crates/os-windows" }
 
 # interface
 egui = "0.36"
@@ -38,11 +39,15 @@ keyring = "4"
 tray-icon = "0.26"
 auto-launch = "0.6"
 interprocess = "2"
+# Windows adapters (`crates/os-windows`)
+windows-sys = "0.61"
+arboard = "3.6"
+clipboard-win = "5.4"
+png = "0.18"
 # notifications of the agent (failures, correction left on the clipboard)
 notify-rust = "4"
 
-# macOS adapters (crates/os-macos)
-arboard = "3.7"
+# macOS adapters (`crates/os-macos`; `arboard` above too)
 core-foundation = "0.10"
 core-graphics = "0.25"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSPasteboard", "NSRunningApplication", "NSWorkspace"] }

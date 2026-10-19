@@ -14,6 +14,7 @@ mod instance;
 mod keychain;
 mod notifications;
 mod permission;
+mod platform;
 mod session;
 mod settings;
 mod startup;
@@ -404,26 +405,14 @@ pub fn run() -> Result<(), LaunchError> {
             kairo::install(&creation.egui_ctx);
             sender.wake(creation.egui_ctx.clone());
             let context = creation.egui_ctx.clone();
-            #[cfg(target_os = "macos")]
-            let os = proofreadme_os_macos::MacOs::new();
-            #[cfg(not(target_os = "macos"))]
-            let os = UnwiredOs;
-            let agent = Agent::load(os, storage, Timing::default())
+            let agent = Agent::load(platform::os(), storage, Timing::default())
                 .with_notifier(SystemNotifier::new())
                 .with_log(log)
                 .on_change(move || context.request_repaint());
-            #[cfg(target_os = "macos")]
-            if let Err(error) = proofreadme_os_macos::listen(agent.hook()) {
-                eprintln!("ProofReadMe: the keyboard hook could not start: {error}");
-            }
+            platform::listen(&agent);
             let mut window = Window::new(agent).with_requests(requests);
-            #[cfg(target_os = "macos")]
-            {
-                window = window.with_permission_pane(|| {
-                    if let Err(error) = proofreadme_os_macos::open_permission_pane() {
-                        eprintln!("ProofReadMe: System Settings could not open: {error}");
-                    }
-                });
+            if let Some(open) = platform::permission_pane() {
+                window = window.with_permission_pane(open);
             }
             match system_registration() {
                 Ok(Some(registration)) => window = window.with_login_registration(registration),

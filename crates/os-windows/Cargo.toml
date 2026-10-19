@@ -1,0 +1,31 @@
+[package]
+name = "proofreadme-os-windows"
+description = "The Windows adapters of the OS port of ProofReadMe: keyboard hook, keystrokes, clipboard, foreground application. No rule."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Empty on other systems: the whole crate is `cfg(windows)`.
+[target.'cfg(windows)'.dependencies]
+proofreadme-core = { workspace = true }
+thiserror = { workspace = true }
+# Reading the clipboard (text, and images in PNG or DIB).
+arboard = { workspace = true }
+# Writing the clipboard in one opening (text, image and the exclusion formats) and its sequence
+# number.
+clipboard-win = { workspace = true }
+# The PNG of an image written to the clipboard, the form `arboard` and most applications read
+# first.
+png = { workspace = true }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+] }

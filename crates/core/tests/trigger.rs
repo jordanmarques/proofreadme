@@ -131,3 +131,13 @@ fn injected_key_events_never_count() {
 
     assert!(!triggered(&desktop, &agent));
 }
+
+#[test]
+fn a_keyboard_hook_on_its_own_thread_feeds_the_agent_through_a_clone() {
+    let (_provider, desktop, agent) = listening();
+    let hook = agent.clone();
+
+    std::thread::spawn(move || Keyboard::new().double_press(&hook, Modifier::Ctrl)).join().unwrap();
+
+    assert!(triggered(&desktop, &agent));
+}
