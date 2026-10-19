@@ -1,12 +1,17 @@
 //! The agent: it receives the key events of the OS, detects the trigger and runs one proofread at
 //! a time on a thread of its own, publishing its state as it goes.
 
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::ProofreadError;
+use crate::log::AgentLog;
+use crate::notification::{NoNotifications, Notification, Notifier};
 use crate::os::{KeyEvent, Os};
+use crate::proofread::{Outcome, Signal};
 use crate::settings::{Settings, SettingsError};
 use crate::storage::Storage;
 use crate::trigger::Detector;
@@ -149,6 +154,10 @@ pub(crate) struct Shared {
     /// The OS, used by one proofread at a time.
     os: Mutex<Box<dyn Os>>,
     pub(crate) timing: Timing,
+    /// Where the notifications go.
+    notifier: Mutex<Arc<dyn Notifier>>,
+    /// Where the failures are written; `None` writes them nowhere.
+    log: Mutex<Option<AgentLog>>,
 }
 
 /// What the agent calls at each change of its state.
@@ -160,6 +169,8 @@ struct Control {
     detector: Detector,
     /// Where the settings are saved; `None` keeps them in memory only.
     storage: Option<Storage>,
+    /// How to reach the running proofread, to cancel it.
+    running: Option<Sender<Signal>>,
 }
 
 impl Shared {
@@ -182,6 +193,23 @@ impl Shared {
         }
     }
 
+    /// Shows a notification.
+    fn notify_user(&self, notification: &Notification) {
+        let notifier = Arc::clone(&self.notifier.lock().unwrap_or_else(PoisonError::into_inner));
+        notifier.notify(notification);
+    }
+
+    /// Tells the failure of a proofread: a notification and a line of the agent log.
+    fn report_failure(&self, cause: &ProofreadError, model: &str, duration: Duration) {
+        self.notify_user(&Notification::Failed(cause.clone()));
+        let log = self.log.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(log) = log {
+            // The notification already told the failure: a log that cannot be written has nowhere
+            // else to say so.
+            let _ = log.failure(cause, model, duration);
+        }
+    }
+
     /// Moves the running proofread to the given step.
     pub(crate) fn step(&self, step: Step) {
         self.control().state.activity = Activity::Proofreading(step);
@@ -193,6 +221,7 @@ impl Shared {
         let mut control = self.control();
         control.state.activity = Activity::Idle;
         control.state.last_failure = failure;
+        control.running = None;
         drop(control);
         self.notify();
     }
@@ -242,8 +271,16 @@ impl Agent {
     }
 
     fn build(os: impl Os, settings: Settings, storage: Option<Storage>, state: State, timing: Timing) -> Self {
-        let control = Control { state, settings, detector: Detector::new(), storage };
-        let shared = Shared { control: Mutex::new(control), changed: Condvar::new(), wakeup: Mutex::new(None), os: Mutex::new(Box::new(os)), timing };
+        let control = Control { state, settings, detector: Detector::new(), storage, running: None };
+        let shared = Shared {
+            control: Mutex::new(control),
+            changed: Condvar::new(),
+            wakeup: Mutex::new(None),
+            os: Mutex::new(Box::new(os)),
+            timing,
+            notifier: Mutex::new(Arc::new(NoNotifications)),
+            log: Mutex::new(None),
+        };
         Self { shared: Arc::new(shared) }
     }
 
@@ -251,6 +288,21 @@ impl Agent {
     #[must_use]
     pub fn on_change(self, wakeup: impl Fn() + Send + Sync + 'static) -> Self {
         *self.shared.wakeup.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(wakeup));
+        self
+    }
+
+    /// Sends the notifications of the agent (failures, correction left on the clipboard) to this
+    /// sink.
+    #[must_use]
+    pub fn with_notifier(self, notifier: impl Notifier) -> Self {
+        *self.shared.notifier.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(notifier);
+        self
+    }
+
+    /// Appends one line per failed proofread to the file at this path.
+    #[must_use]
+    pub fn with_log(self, path: PathBuf) -> Self {
+        *self.shared.log.lock().unwrap_or_else(PoisonError::into_inner) = Some(AgentLog::new(path));
         self
     }
 
@@ -333,15 +385,28 @@ impl Agent {
         control.state.activity = Activity::Proofreading(Step::Capturing);
         control.state.last_failure = None;
         let settings = control.settings.clone();
+        let model = settings.provider.model.clone();
+        let (sender, signals) = mpsc::channel();
+        control.running = Some(sender.clone());
         drop(control);
         self.shared.notify();
         let shared = Arc::clone(&self.shared);
         let spawned = thread::Builder::new().name("proofread".to_owned()).spawn(move || {
+            let started = Instant::now();
             let mut ending = Ending { shared: Arc::clone(&shared), failure: None };
-            ending.failure = proofread::run(&shared, &settings).err();
+            match proofread::run(&shared, &settings, &signals, &sender) {
+                Ok(Outcome::Finished | Outcome::Cancelled) => {}
+                Ok(Outcome::LeftOnClipboard) => shared.notify_user(&Notification::LeftOnClipboard),
+                Err(cause) => {
+                    shared.report_failure(&cause, &settings.provider.model, started.elapsed());
+                    ending.failure = Some(cause);
+                }
+            }
         });
         if let Err(error) = spawned {
-            self.shared.end(Some(ProofreadError::Thread(error.to_string())));
+            let cause = ProofreadError::Thread(error.to_string());
+            self.shared.report_failure(&cause, &model, Duration::ZERO);
+            self.shared.end(Some(cause));
         }
     }
 
@@ -354,9 +419,16 @@ impl Agent {
     /// Cancel from the menu of the session icon, offered while a proofread runs
     /// ([`State::can_cancel`]). Without a running proofread, it does nothing.
     ///
-    /// For now the running proofread still goes to its end: stopping it, and the restoration of
-    /// the clipboard that goes with it, come with the failure paths of the proofread.
-    pub fn cancel(&self) {}
+    /// The proofread stops before the paste without waiting for the provider: nothing is pasted,
+    /// the clipboard is given back, nothing is notified, and a correction arriving later is
+    /// dropped. Once the paste has started, the proofread goes to its end.
+    pub fn cancel(&self) {
+        let running = self.shared.control().running.clone();
+        if let Some(running) = running {
+            // A proofread that ended meanwhile no longer listens: nothing left to cancel.
+            let _ = running.send(Signal::Cancel);
+        }
+    }
 
     /// Waits until no proofread is running, for at most the given delay. True if so.
     pub fn wait_until_idle(&self, delay: Duration) -> bool {

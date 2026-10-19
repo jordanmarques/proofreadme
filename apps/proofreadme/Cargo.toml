@@ -24,6 +24,7 @@ keyring = { workspace = true }
 tray-icon = { workspace = true }
 auto-launch = { workspace = true }
 interprocess = { workspace = true }
+notify-rust = { workspace = true }
 
 # The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
 # eframe uses.

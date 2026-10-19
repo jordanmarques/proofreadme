@@ -38,6 +38,8 @@ keyring = "4"
 tray-icon = "0.26"
 auto-launch = "0.6"
 interprocess = "2"
+# notifications of the agent (failures, correction left on the clipboard)
+notify-rust = "4"
 
 # macOS adapters (crates/os-macos)
 arboard = "3.7"
