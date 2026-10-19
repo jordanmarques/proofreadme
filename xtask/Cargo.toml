@@ -10,3 +10,9 @@ publish = false
 workspace = true
 
 [dependencies]
+# `cargo xtask package`: the icon of the macOS bundle, drawn by code then encoded in PNG.
+proofreadme-icon = { workspace = true }
+png = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

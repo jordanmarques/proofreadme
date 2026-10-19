@@ -2,6 +2,8 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod package;
+
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
@@ -9,6 +11,9 @@ const HELP: &str = "\
 cargo xtask <command>
 
   ci       format, clippy without a warning, layers, tests (stops at the first failure)
+  package  release build of the package of the host OS in dist/: ProofReadMe.app (macOS), signed
+           with the certificate named by PROOFREADME_SIGNING_IDENTITY (default \"ProofReadMe
+           Signing\") or ad hoc with --ad-hoc; ProofReadMe.exe (Windows)
 ";
 
 /// The layers of the workspace: each crate and the crates it is not allowed to pull in.
@@ -44,9 +49,10 @@ const ALLOW_UNSAFE: &str = concat!("allow(", "unsafe_code)");
 const UNSAFE_ALLOWED: &[&str] = &["crates/os-windows"];
 
 fn main() -> ExitCode {
-    let command = std::env::args().nth(1);
-    let result = match command.as_deref() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let result = match arguments.first().map(String::as_str) {
         Some("ci") => ci(),
+        Some("package") => package::package(&arguments[1..]),
         Some("help" | "--help" | "-h") | None => {
             print!("{HELP}");
             Ok(())

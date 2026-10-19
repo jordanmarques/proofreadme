@@ -43,6 +43,8 @@ fn embed(icon: &Path) -> Result<(), String> {
         .set("FileDescription", "ProofReadMe")
         .set("OriginalFilename", "ProofReadMe.exe")
         .set("InternalName", "proofreadme")
+        .set("CompanyName", "Jordan Marques")
+        .set("LegalCopyright", "Copyright © Jordan Marques. MIT OR Apache-2.0.")
         .compile()
         .map_err(|error| error.to_string())
 }

@@ -29,6 +29,8 @@ notify-rust = { workspace = true }
 # The adapters of the OS port on Windows.
 [target.'cfg(windows)'.dependencies]
 proofreadme-os-windows = { workspace = true }
+# The AppUserModelID the notifications are sent under, registered in the user's registry.
+windows-registry = { workspace = true }
 
 # The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
 # eframe uses.

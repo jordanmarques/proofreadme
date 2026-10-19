@@ -46,6 +46,8 @@ clipboard-win = "5.4"
 png = "0.18"
 # notifications of the agent (failures, correction left on the clipboard)
 notify-rust = "4"
+# Windows: the name and icon of the notifications (AppUserModelID registered for the user)
+windows-registry = "0.6"
 
 # macOS adapters (`crates/os-macos`; `arboard` above too)
 core-foundation = "0.10"
