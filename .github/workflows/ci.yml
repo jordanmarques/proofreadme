@@ -93,4 +93,4 @@ jobs:
           $bytes = [IO.File]::ReadAllBytes((Resolve-Path $exe))
           $pe = [BitConverter]::ToInt32($bytes, 0x3c)
           $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 24 + 68)
-          if ($subsystem -ne 2) { throw "subsystem $subsystem: the executable would open a console" }
+          if ($subsystem -ne 2) { throw "subsystem ${subsystem}: the executable would open a console" }
