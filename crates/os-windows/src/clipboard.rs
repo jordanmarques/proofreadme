@@ -86,7 +86,7 @@ fn dib_v5(image: &Image) -> Result<Vec<u8>, OsError> {
     let size = row.checked_mul(image.height).filter(|&size| size == image.rgba.len()).ok_or_else(|| failed("image of inconsistent size"))?;
     let width = i32::try_from(image.width).map_err(failed)?;
     let height = i32::try_from(image.height).map_err(failed)?;
-    let mut dib = Vec::with_capacity(size.saturating_add(124));
+    let mut dib = Vec::with_capacity(size.saturating_add(HEADER as usize));
     dib.extend_from_slice(&HEADER.to_le_bytes());
     dib.extend_from_slice(&width.to_le_bytes());
     dib.extend_from_slice(&height.to_le_bytes()); // positive: bottom-up

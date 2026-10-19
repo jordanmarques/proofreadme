@@ -17,7 +17,7 @@ use std::process::ExitCode;
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use proofreadme::{RegistrationError, UnwiredOs, Window};
+use proofreadme::{RegistrationError, UnsupportedOs, Window};
 use proofreadme_core::{Agent, MemoryKeychain, Permission, Provider, Settings, Storage, Timing};
 use proofreadme_icon::Look;
 
@@ -61,9 +61,9 @@ fn agent(data: &Path, configured: bool) -> Result<Agent, String> {
     if configured {
         let provider =
             Provider { base_url: "https://openrouter.ai/api/v1".to_owned(), api_key: "sk-screens".to_owned(), model: "vendor/model".to_owned() };
-        Agent::load(UnwiredOs, storage(), Timing::default()).save_settings(Settings { provider, ..Settings::default() }).map_err(say)?;
+        Agent::load(UnsupportedOs, storage(), Timing::default()).save_settings(Settings { provider, ..Settings::default() }).map_err(say)?;
     }
-    Ok(Agent::load(UnwiredOs, storage(), Timing::default()))
+    Ok(Agent::load(UnsupportedOs, storage(), Timing::default()))
 }
 
 fn open<'a>(window: Window) -> Harness<'a, Window> {
@@ -120,7 +120,9 @@ fn settings_at_first_launch(folder: &Path) -> Result<(), String> {
 fn settings_without_registration(folder: &Path) -> Result<(), String> {
     let data = tempfile::tempdir().map_err(say)?;
     let refusal = RegistrationError::from_system("access denied");
-    let window = Window::new(agent(data.path(), false)?).with_registration_error(&refusal).without_session_icon();
+    let agent = agent(data.path(), false)?;
+    agent.login_unavailable(&refusal);
+    let window = Window::new(agent).without_session_icon();
     let mut harness = open(window);
     harness.query_all_by_label("LAUNCH AT LOGIN").next().ok_or("no launch-at-login switch")?.scroll_to_me();
     harness.run_ok();

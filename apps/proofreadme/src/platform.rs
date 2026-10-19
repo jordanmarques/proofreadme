@@ -17,42 +17,44 @@ pub(crate) fn os() -> proofreadme_os_macos::MacOs {
 
 /// The OS port of this system: none.
 #[cfg(not(any(windows, target_os = "macos")))]
-pub(crate) fn os() -> crate::UnwiredOs {
-    crate::UnwiredOs
+pub(crate) fn os() -> crate::UnsupportedOs {
+    crate::UnsupportedOs
 }
 
 /// Starts passing the key events of the session to the agent. Failing it, the agent runs without a
-/// trigger, and says why on the error output.
+/// trigger: the hook reports it, and the agent shows it.
 pub(crate) fn listen(agent: &Agent) {
+    let hook = agent.hook();
     #[cfg(windows)]
     {
-        let agent = agent.clone();
-        if let Err(error) = proofreadme_os_windows::listen(move |event| agent.key_event(event)) {
-            eprintln!("ProofReadMe: no trigger: {error}");
+        let feed = hook.clone();
+        if let Err(error) = proofreadme_os_windows::listen(move |event| feed.key_event(event)) {
+            hook.failed(&error);
         }
     }
     // On macOS the hook also reports the Accessibility permission to the agent.
     #[cfg(target_os = "macos")]
-    if let Err(error) = proofreadme_os_macos::listen(agent.hook()) {
-        eprintln!("ProofReadMe: no trigger: {error}");
+    if let Err(error) = proofreadme_os_macos::listen(hook.clone()) {
+        hook.failed(&error);
     }
     #[cfg(not(any(windows, target_os = "macos")))]
-    let _ = agent;
+    let _ = hook;
 }
 
 /// Opens the pane of System Settings where the permission of the keyboard hook is granted: only
-/// macOS asks for one.
+/// macOS asks for one. A pane that does not open is told in the agent log.
 #[cfg(target_os = "macos")]
-pub(crate) fn permission_pane() -> Option<impl FnMut() + 'static> {
-    Some(|| {
+pub(crate) fn permission_pane(agent: &Agent) -> Option<impl FnMut() + 'static> {
+    let agent = agent.clone();
+    Some(move || {
         if let Err(error) = proofreadme_os_macos::open_permission_pane() {
-            eprintln!("ProofReadMe: System Settings could not open: {error}");
+            agent.note(&format!("System Settings could not open: {error}"));
         }
     })
 }
 
 /// Opens the pane of the system where the permission of the keyboard hook is granted: none here.
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn permission_pane() -> Option<fn()> {
+pub(crate) fn permission_pane(_agent: &Agent) -> Option<fn()> {
     None
 }

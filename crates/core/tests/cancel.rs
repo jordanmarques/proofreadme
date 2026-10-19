@@ -9,7 +9,7 @@ use proofreadme_core::{Activity, ClipboardContent, Keystroke, Modifier};
 use support::{DELAY, Desktop, Keyboard, LocalProvider, Outside, Reply, settings, wait_idle, watched_agent};
 
 #[test]
-fn cancel_during_a_slow_answer_pastes_nothing_and_restores_the_clipboard() {
+fn cancel_during_a_slow_response_pastes_nothing_and_restores_the_clipboard() {
     let provider = LocalProvider::start();
     let (reply, release) = Reply::correction("Hello world").held();
     provider.reply(reply);
@@ -22,7 +22,7 @@ fn cancel_during_a_slow_answer_pastes_nothing_and_restores_the_clipboard() {
     Keyboard::new().double_press(&agent, Modifier::Ctrl);
     provider.next_request();
     agent.cancel();
-    assert!(agent.wait_until_idle(DELAY), "the agent did not stop while the provider still holds its answer");
+    assert!(agent.wait_until_idle(DELAY), "the agent did not stop while the provider still holds its response");
     let after_cancel = (desktop.clipboard(), agent.state());
     release.send(()).unwrap();
 

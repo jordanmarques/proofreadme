@@ -5,13 +5,14 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::os::Modifier;
-use crate::settings::{Provider, Settings, SettingsError};
+use crate::settings::{MAX_TIMEOUT, Provider, Settings, SettingsError};
+use crate::wait::lock;
 
 /// A failure of the keychain. Its detail never carries the API key.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -45,7 +46,7 @@ impl MemoryKeychain {
 
     /// The key it holds.
     pub fn key(&self) -> Option<String> {
-        self.key.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.key).clone()
     }
 }
 
@@ -55,12 +56,12 @@ impl Keychain for MemoryKeychain {
     }
 
     fn set_api_key(&mut self, key: &str) -> Result<(), KeychainError> {
-        *self.key.lock().unwrap_or_else(PoisonError::into_inner) = Some(key.to_owned());
+        *lock(&self.key) = Some(key.to_owned());
         Ok(())
     }
 
     fn delete_api_key(&mut self) -> Result<(), KeychainError> {
-        *self.key.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        *lock(&self.key) = None;
         Ok(())
     }
 }
@@ -171,7 +172,7 @@ impl Config {
             },
             prompt: self.prompt.unwrap_or(defaults.prompt),
             reasoning: self.reasoning.unwrap_or(defaults.reasoning),
-            timeout: self.timeout_seconds.map_or(defaults.timeout, Duration::from_secs),
+            timeout: self.timeout_seconds.map_or(defaults.timeout, |seconds| Duration::from_secs(seconds).min(MAX_TIMEOUT)),
             launch_at_login: self.launch_at_login.unwrap_or(defaults.launch_at_login),
         }
     }

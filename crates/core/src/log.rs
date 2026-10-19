@@ -1,6 +1,8 @@
 //! The agent log: one line per failed proofread, with its time, its cause, the model and the
-//! duration. Never the selection, the correction or the API key.
+//! duration, and one line per problem that does not stop the agent (a platform adapter that fails,
+//! a keyboard hook that cannot listen). Never the selection, the correction or the API key.
 
+use std::fmt::Display;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -8,15 +10,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::ProofreadError;
 
-/// A text file the agent appends its failures to.
+/// A text file the agent and its platform adapters append their failures to. Cheap to clone.
 #[derive(Debug, Clone)]
-pub(crate) struct AgentLog {
+pub struct AgentLog {
     path: PathBuf,
 }
 
 impl AgentLog {
-    pub(crate) fn new(path: PathBuf) -> Self {
+    /// The log in the file at this path, created with its folder at the first line.
+    #[must_use]
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    /// Appends the line of a problem that does not stop the agent. Its text must not carry the
+    /// text of the user.
+    pub fn note(&self, problem: &dyn Display) {
+        // The log is where a problem goes when there is nowhere else to say it: a log that cannot
+        // be written has nowhere left.
+        let _ = append(&self.path, &format!("{}  {problem}", timestamp(SystemTime::now())));
     }
 
     /// Appends the line of a failed proofread, creating the file and its folder if needed.

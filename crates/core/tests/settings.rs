@@ -9,8 +9,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use proofreadme_core::{
-    Agent, Keychain, KeychainError, MemoryKeychain, Modifier, PLACEHOLDER, ProofreadError, Provider, ProviderTest, Settings, SettingsError, Storage,
-    TEST_SENTENCE,
+    Agent, Keychain, KeychainError, LoginError, LoginItem, MAX_TIMEOUT, MemoryKeychain, Modifier, PLACEHOLDER, ProofreadError, Provider,
+    ProviderTest, Settings, SettingsError, Storage, TEST_SENTENCE,
 };
 use support::{API_KEY, DELAY, Desktop, Keyboard, LocalProvider, Reply, timing};
 
@@ -176,6 +176,56 @@ fn a_trigger_without_a_key_asks_for_the_settings_and_sends_no_request() {
     assert_eq!(agent.state().settings_requests, before + 1);
     assert!(desktop.keystrokes().is_empty(), "the selection is not even copied");
     assert!(provider.received().is_empty());
+}
+
+#[test]
+fn a_timeout_beyond_the_ceiling_is_brought_down_to_it_at_load() {
+    let folder = tempfile::tempdir().unwrap();
+    fs::create_dir_all(config(folder.path()).parent().unwrap()).unwrap();
+    fs::write(config(folder.path()), "timeout_seconds = 86400\n").unwrap();
+
+    let agent = load(&Desktop::new(), folder.path(), &MemoryKeychain::default());
+
+    assert_eq!(MAX_TIMEOUT, Duration::from_secs(600));
+    assert_eq!(agent.settings().timeout, MAX_TIMEOUT);
+}
+
+#[test]
+fn at_first_launch_the_agent_asks_to_register_at_login() {
+    let folder = tempfile::tempdir().unwrap();
+    let agent = load(&Desktop::new(), folder.path(), &MemoryKeychain::default());
+
+    assert_eq!(agent.take_login_item(), Some(LoginItem::Register));
+    assert_eq!(agent.take_login_item(), None, "asked once");
+}
+
+#[test]
+fn a_saved_switch_change_asks_to_align_the_registration_and_an_unchanged_one_does_not() {
+    let folder = tempfile::tempdir().unwrap();
+    let provider = LocalProvider::start();
+    let agent = load(&Desktop::new(), folder.path(), &MemoryKeychain::default());
+    let _ = agent.take_login_item();
+
+    agent.save_settings(changed(&provider)).unwrap();
+    let switched_off = agent.take_login_item();
+    agent.save_settings(changed(&provider)).unwrap();
+
+    assert_eq!(switched_off, Some(LoginItem::Unregister));
+    assert_eq!(agent.take_login_item(), None);
+}
+
+#[test]
+fn a_failed_registration_is_kept_in_the_state_until_one_succeeds() {
+    let folder = tempfile::tempdir().unwrap();
+    let agent = load(&Desktop::new(), folder.path(), &MemoryKeychain::default());
+
+    agent.login_item_done(LoginItem::Register, Err(&"access denied"));
+    let failed = agent.state().login_error;
+    agent.login_item_done(LoginItem::Register, Ok(()));
+
+    assert_eq!(failed, Some(LoginError::Register("access denied".to_owned())));
+    assert_eq!(failed.unwrap().to_string(), "registration at login failed: access denied");
+    assert_eq!(agent.state().login_error, None);
 }
 
 /// A keychain the OS refuses to open.

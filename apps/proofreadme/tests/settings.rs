@@ -96,7 +96,7 @@ fn the_test_button_shows_the_correction_of_the_local_provider_without_holding_th
     window.get_by_label("TEST").click();
     window.run_ok();
 
-    // The provider holds its answer: the window still draws, showing the Test as running.
+    // The provider holds its response: the window still draws, showing the Test as running.
     window.get_by_label("TESTING");
     assert!(provider.next_request().contains(TEST_SENTENCE));
     release.send(()).unwrap();

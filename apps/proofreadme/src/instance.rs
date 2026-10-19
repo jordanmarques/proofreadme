@@ -1,4 +1,4 @@
-//! The single instance: a second launch asks the already running agent to show its window, then
+//! The single instance: a second launch asks the already running agent to show its settings, then
 //! ends.
 //!
 //! The two processes talk through a local socket (`interprocess` crate): a Unix domain socket
@@ -14,6 +14,8 @@ use std::time::Duration;
 
 use interprocess::local_socket::traits::{ListenerExt, Stream as _};
 use interprocess::local_socket::{GenericFilePath, GenericNamespaced, Listener, ListenerOptions, Name, Stream, ToFsName, ToNsName};
+
+use crate::session::{Request, RequestSender};
 
 /// The message by which a second launch asks for the window to be shown.
 const SHOW: &str = "show";
@@ -44,20 +46,21 @@ pub fn announce(folder: &Path, identifier: &str) -> io::Result<Instance> {
     if request_show(name(folder, identifier)?).is_ok() {
         return Ok(Instance::AlreadyRunning);
     }
-    // Nobody answers. The file of an agent that died abruptly may remain: it is replaced.
+    // Nobody responds. The file of an agent that died abruptly may remain: it is replaced.
     std::fs::create_dir_all(folder)?;
     let socket = ListenerOptions::new().name(name(folder, identifier)?).try_overwrite(true).create_sync()?;
     Ok(Instance::First(InstanceListener { socket }))
 }
 
 impl InstanceListener {
-    /// Listens to the next launches on a separate thread, and calls `show` for each.
+    /// Listens to the next launches on a separate thread: each one brings back the settings
+    /// window of the agent ([`Request::OpenSettings`], user story 47), sent through `requests`.
     ///
     /// # Errors
     ///
     /// The input-output error if the thread cannot be created.
-    pub fn listen(self, show: impl Fn() + Send + Sync + 'static) -> io::Result<()> {
-        let show: Arc<dyn Fn() + Send + Sync> = Arc::new(show);
+    pub fn listen(self, requests: RequestSender) -> io::Result<()> {
+        let show: Arc<dyn Fn() + Send + Sync> = Arc::new(move || requests.send(Request::OpenSettings));
         let reads = Arc::new(AtomicUsize::new(0));
         thread::Builder::new().name("proofreadme-instance".to_owned()).spawn(move || {
             for connection in self.socket.incoming().flatten() {

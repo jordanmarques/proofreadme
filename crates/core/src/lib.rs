@@ -10,6 +10,7 @@ mod agent;
 mod cleaning;
 mod error;
 mod log;
+mod login;
 mod notification;
 mod os;
 mod proofread;
@@ -19,13 +20,15 @@ mod storage;
 mod trigger;
 mod wait;
 
-pub use agent::{Activity, Agent, Hook, IconState, Permission, ProviderTest, State, Step, TEST_SENTENCE, Timing};
+pub use agent::{Activity, Agent, Hook, IconState, NoTrigger, Permission, ProviderTest, State, Step, TEST_SENTENCE, Timing};
 pub use error::ProofreadError;
+pub use log::AgentLog;
+pub use login::{LoginError, LoginItem};
 pub use notification::{Notification, Notifier};
 pub use os::{ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Os, OsError};
 pub use provider::{PendingCorrection, request_correction};
 pub use settings::{
-    DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_TIMEOUT, DEFAULT_TRIGGER, PLACEHOLDER, Provider, Settings, SettingsError,
+    DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_TIMEOUT, DEFAULT_TRIGGER, MAX_TIMEOUT, PLACEHOLDER, Provider, Settings, SettingsError,
 };
 pub use storage::{Keychain, KeychainError, MemoryKeychain, Storage};
 pub use trigger::DOUBLE_PRESS_WINDOW;

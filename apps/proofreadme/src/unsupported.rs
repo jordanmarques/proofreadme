@@ -1,16 +1,17 @@
-//! The OS port of the agent until the platform adapters exist: no keyboard hook feeds the agent,
-//! so no proofread starts, and an operation that would still reach it is refused.
+//! The OS port of the agent on a system ProofReadMe does not support (neither macOS nor Windows):
+//! no keyboard hook feeds the agent, so no proofread starts, and an operation that would still
+//! reach it is refused. The window tests run the agent on it.
 
 use proofreadme_core::{ClipboardContent, Keystroke, Mark, Os, OsError};
 
 /// The cause given by every refused operation.
-const CAUSE: &str = "no platform adapter on this build";
+const CAUSE: &str = "no platform adapter for this system";
 
 /// An OS port that refuses every operation.
 #[derive(Debug, Default)]
-pub struct UnwiredOs;
+pub struct UnsupportedOs;
 
-impl Os for UnwiredOs {
+impl Os for UnsupportedOs {
     fn read_clipboard(&mut self) -> Result<ClipboardContent, OsError> {
         Err(OsError::Clipboard(CAUSE.to_owned()))
     }

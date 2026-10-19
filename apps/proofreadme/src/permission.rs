@@ -1,17 +1,25 @@
-//! The permission panel: shown above either screen while the keyboard hook lacks the permission
-//! of the OS (Accessibility on macOS), as the agent reports it.
+//! The permission panel: shown above either screen while the agent is deaf to the trigger, as it
+//! reports it: the keyboard hook lacks the permission of the OS (Accessibility on macOS), or cannot
+//! listen at all.
 
 use egui::Ui;
-use kairo::{Button, Panel, StatusLight, Tone, fonts, tokens};
-use proofreadme_core::Permission;
+use kairo::{Button, Panel, StatusLight, Tone};
+use proofreadme_core::{Permission, State};
 
 use crate::Action;
+use crate::settings::{body, sentence};
 
-/// Draws the panel for this permission, if it is not granted, and returns what the user asked
-/// for. `can_open_pane` tells whether the window knows how to open the pane of System Settings.
-pub(crate) fn show(ui: &mut Ui, permission: Permission, can_open_pane: bool) -> Option<Action> {
+/// Draws the panel for this state, if the agent is deaf, and returns what the user asked for.
+/// `can_open_pane` tells whether the window knows how to open the pane of System Settings.
+pub(crate) fn show(ui: &mut Ui, state: &State, can_open_pane: bool) -> Option<Action> {
     let mut action = None;
-    match permission {
+    if let Some(no_trigger) = &state.no_trigger {
+        Panel::new().title("Trigger").jp("起動").code("HOOK-00").tone(Tone::Alert).show(ui, |ui| {
+            ui.add(StatusLight::alert().label("Trigger off").jp("停止"));
+            body(ui, &sentence(&format!("{no_trigger}. Relaunch ProofReadMe to try again")));
+        });
+    }
+    match state.permission {
         Permission::Granted => {}
         Permission::Missing => {
             Panel::new().title("Permission").jp("許可").code("ACC-00").tone(Tone::Alert).show(ui, |ui| {
@@ -34,8 +42,4 @@ pub(crate) fn show(ui: &mut Ui, permission: Permission, can_open_pane: bool) -> 
         }
     }
     action
-}
-
-fn body(ui: &mut Ui, text: &str) {
-    ui.label(fonts::body(text, tokens::TEXT_MD, tokens::FG_1));
 }

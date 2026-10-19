@@ -4,7 +4,7 @@
 //! The window only knows the [`IconPort`] port: it gives the icon its look whenever the state of
 //! the agent changes it. The drawing is that of the `proofreadme-icon` crate.
 
-use proofreadme_core::IconState;
+use proofreadme_core::{AgentLog, IconState};
 use proofreadme_icon::Look;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -46,6 +46,8 @@ pub enum IconError {
 pub struct SessionIcon {
     icon: TrayIcon,
     cancel: MenuItem,
+    /// Where a look the icon cannot take is told.
+    log: AgentLog,
 }
 
 /// The side and the colour of the icon on this OS.
@@ -65,7 +67,8 @@ fn image(icon: IconState) -> Result<Icon, IconError> {
 }
 
 impl SessionIcon {
-    /// Installs the icon and its menu; each choice of the menu is sent to the window by `sender`.
+    /// Installs the icon and its menu; each choice of the menu is sent to the window by `sender`,
+    /// and a look the icon later cannot take is told in `log`.
     ///
     /// To be called on the main thread, once the event loop has started (with eframe: in the
     /// creation closure of the application), as `tray-icon` requires on macOS.
@@ -73,7 +76,7 @@ impl SessionIcon {
     /// # Errors
     ///
     /// The cause, if the system refuses the icon or its menu.
-    pub fn install(sender: &RequestSender) -> Result<Self, IconError> {
+    pub fn install(sender: &RequestSender, log: AgentLog) -> Result<Self, IconError> {
         let cancel = MenuItem::with_id(CANCEL, "Cancel", false, None);
         let menu = Menu::new();
         menu.append_items(&[
@@ -112,7 +115,7 @@ impl SessionIcon {
                 for_the_click.send(Request::Open);
             }
         }));
-        Ok(Self { icon, cancel })
+        Ok(Self { icon, cancel, log })
     }
 
     fn set_look(&self, icon: IconState) -> Result<(), IconError> {
@@ -130,7 +133,7 @@ impl IconPort for SessionIcon {
         self.cancel.set_enabled(can_cancel);
         // The icon keeps its previous look: the window says the same thing.
         if let Err(error) = self.set_look(icon) {
-            eprintln!("ProofReadMe: the session icon could not change its look: {error}");
+            self.log.note(&format!("the session icon could not change its look: {error}"));
         }
     }
 }

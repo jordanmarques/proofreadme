@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use arboard::{Clipboard, ImageData, SetExtApple};
+use arboard::{Clipboard, ImageData};
 use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use objc2_app_kit::{NSPasteboard, NSWorkspace};
@@ -13,8 +13,9 @@ use crate::INJECTED;
 
 /// The type of plain text on the pasteboard (`NSPasteboardTypeString`).
 const TEXT: &str = "public.utf8-plain-text";
-/// The markers of a temporary write, that clipboard managers skip (nspasteboard.org).
-const MARKERS: [&str; 2] = ["org.nspasteboard.TransientType", "org.nspasteboard.ConcealedType"];
+/// The marker of a temporary write, that clipboard managers skip (nspasteboard.org). Not
+/// `ConcealedType`: it would mark the restored clipboard of the user as a password.
+const TRANSIENT: &str = "org.nspasteboard.TransientType";
 
 /// `kVK_ANSI_C` and `kVK_ANSI_V`: the keys by position on the keyboard.
 const KEY_C: CGKeyCode = 8;
@@ -56,19 +57,15 @@ impl Os for MacOs {
     fn write_clipboard(&mut self, content: &ClipboardContent, mark: Mark) -> Result<(), OsError> {
         let pasteboard = NSPasteboard::generalPasteboard();
         if let Some(image) = &content.image {
-            // arboard clears the pasteboard and writes the image; the text and the markers join it.
+            // arboard clears the pasteboard and writes the image; the text and the marker join it.
+            // Its `exclude_from_history` is not used: it writes `ConcealedType`.
             let data = ImageData { width: image.width, height: image.height, bytes: Cow::Borrowed(&image.rgba) };
-            let mut clipboard = clipboard()?;
-            let set = clipboard.set();
-            let set = if mark == Mark::Transient { set.exclude_from_history() } else { set };
-            set.image(data).map_err(|error| OsError::Clipboard(error.to_string()))?;
+            clipboard()?.set_image(data).map_err(|error| OsError::Clipboard(error.to_string()))?;
         } else {
             pasteboard.clearContents();
         }
         if mark == Mark::Transient && (content.text.is_some() || content.image.is_some()) {
-            for marker in MARKERS {
-                pasteboard.setString_forType(ns_string!(""), &NSString::from_str(marker));
-            }
+            pasteboard.setString_forType(ns_string!(""), &NSString::from_str(TRANSIENT));
         }
         if let Some(text) = &content.text
             && !pasteboard.setString_forType(&NSString::from_str(text), &NSString::from_str(TEXT))

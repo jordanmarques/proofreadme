@@ -6,19 +6,16 @@ use std::time::Duration;
 use egui::{DragValue, TextEdit, Ui};
 use kairo::fonts;
 use kairo::{Button, Panel, StatusLight, Switch, Tone, tokens};
-use proofreadme_core::{Modifier, ProviderTest, Settings, SettingsError, State};
+use proofreadme_core::{MAX_TIMEOUT, Modifier, ProviderTest, Settings, SettingsError, State};
 
-use crate::{Action, SessionNotice};
+use crate::Action;
 
 /// The trigger keys offered, with their labels.
 const TRIGGER_KEYS: [(Modifier, &str); 4] =
     [(Modifier::Ctrl, "Ctrl"), (Modifier::Alt, "Alt / Option"), (Modifier::Shift, "Shift"), (Modifier::Cmd, "Cmd")];
 
-/// The longest timeout the form offers, in seconds.
-const MAX_TIMEOUT_SECONDS: u64 = 600;
-
 /// Draws the form over `draft`, the settings being edited, and returns what the user asked for.
-pub(crate) fn show(ui: &mut Ui, draft: &mut Settings, state: &State, saved: bool, session: &SessionNotice<'_>) -> Option<Action> {
+pub(crate) fn show(ui: &mut Ui, draft: &mut Settings, state: &State, saved: bool, no_icon: bool) -> Option<Action> {
     let mut action = None;
     Panel::new().title("Provider").jp("接続").code("PRV-01").tone(Tone::Accent).show(ui, |ui| {
         field(ui, "Base URL", &mut draft.provider.base_url, false);
@@ -47,16 +44,16 @@ pub(crate) fn show(ui: &mut Ui, draft: &mut Settings, state: &State, saved: bool
         note(ui, "Press it twice, quickly, with text selected.");
         let label = ui.label(fonts::label("Timeout (seconds)", tokens::TEXT_XS, tokens::FG_2));
         let mut seconds = draft.timeout.as_secs();
-        if ui.add(DragValue::new(&mut seconds).range(1..=MAX_TIMEOUT_SECONDS)).labelled_by(label.id).changed() {
+        if ui.add(DragValue::new(&mut seconds).range(1..=MAX_TIMEOUT.as_secs())).labelled_by(label.id).changed() {
             draft.timeout = Duration::from_secs(seconds);
         }
         ui.add(Switch::new(&mut draft.reasoning).label("Reasoning").jp("推論"));
         ui.add(Switch::new(&mut draft.launch_at_login).label("Launch at login").jp("自動起動"));
-        if let Some(error) = session.registration_error {
+        if let Some(error) = &state.login_error {
             ui.add(StatusLight::warn().label("Login item").jp("登録"));
-            body(ui, &sentence(error));
+            body(ui, &sentence(&error.to_string()));
         }
-        if session.no_icon {
+        if no_icon {
             note(ui, "No session icon: closing the window quits ProofReadMe.");
         }
     });
@@ -107,12 +104,13 @@ fn field(ui: &mut Ui, name: &str, text: &mut String, password: bool) {
 }
 
 /// An error message of the core as a sentence: capitalised, with a full stop.
-fn sentence(message: &str) -> String {
+pub(crate) fn sentence(message: &str) -> String {
     let mut characters = message.chars();
     characters.next().map_or_else(String::new, |first| format!("{}{}.", first.to_uppercase(), characters.as_str()))
 }
 
-fn body(ui: &mut Ui, text: &str) {
+/// A line of body text.
+pub(crate) fn body(ui: &mut Ui, text: &str) {
     ui.label(fonts::body(text, tokens::TEXT_MD, tokens::FG_1));
 }
 

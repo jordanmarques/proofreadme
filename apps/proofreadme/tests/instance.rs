@@ -1,10 +1,9 @@
 //! The single instance, on a real local socket placed in a temporary folder: nothing is shared
 //! with an agent really running on the machine.
 
-use std::sync::mpsc;
 use std::time::Duration;
 
-use proofreadme::{Instance, announce};
+use proofreadme::{Instance, Request, RequestSender, announce};
 
 /// An identifier specific to this test: on Windows the named pipe is global to the machine.
 fn identifier(test: &str) -> String {
@@ -12,17 +11,17 @@ fn identifier(test: &str) -> String {
 }
 
 #[test]
-fn the_second_launch_asks_the_first_to_show_its_window() {
+fn the_second_launch_asks_the_first_to_show_its_settings() {
     let folder = tempfile::tempdir().unwrap();
     let identifier = identifier("second");
-    let (shows, received) = mpsc::channel();
+    let (sender, received) = RequestSender::new();
     let Instance::First(listener) = announce(folder.path(), &identifier).unwrap() else { panic!("the first launch becomes the agent") };
-    listener.listen(move || shows.send(()).unwrap()).unwrap();
+    listener.listen(sender).unwrap();
 
     let second = announce(folder.path(), &identifier).unwrap();
 
     assert!(matches!(second, Instance::AlreadyRunning), "the second launch only has to end");
-    received.recv_timeout(Duration::from_secs(5)).expect("the first received the request to show its window");
+    assert_eq!(received.recv_timeout(Duration::from_secs(5)), Ok(Request::OpenSettings), "the first brings back its settings window");
 }
 
 #[cfg(unix)]
@@ -33,9 +32,9 @@ fn a_silent_or_talkative_client_does_not_hold_up_the_listening_to_the_next_launc
 
     let folder = tempfile::tempdir().unwrap();
     let identifier = identifier("silent");
-    let (shows, received) = mpsc::channel();
+    let (sender, received) = RequestSender::new();
     let Instance::First(listener) = announce(folder.path(), &identifier).unwrap() else { panic!("the first launch becomes the agent") };
-    listener.listen(move || shows.send(()).unwrap()).unwrap();
+    listener.listen(sender).unwrap();
     let socket = folder.path().join(format!("{identifier}.sock"));
     // One client connects and says nothing; another talks without ever finishing its line.
     let _silent = UnixStream::connect(&socket).unwrap();

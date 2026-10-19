@@ -9,8 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use proofreadme_core::{
-    Agent, ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Notification, Notifier, Os, OsError, Provider, Settings,
-    Timing,
+    Agent, AgentLog, ClipboardContent, Direction, Image, Key, KeyEvent, Keystroke, Mark, Modifier, Notification, Notifier, Os, OsError, Provider,
+    Settings, Timing,
 };
 
 /// The delay beyond which a test gives up waiting for the agent: never reached when all goes well.
@@ -44,6 +44,8 @@ struct DesktopState {
     keystrokes: Vec<Keystroke>,
     pasted: Vec<String>,
     foreground: String,
+    /// The keystrokes the foreground application refuses (an elevated application on Windows).
+    refused: Vec<Keystroke>,
 }
 
 impl Desktop {
@@ -101,6 +103,12 @@ impl Desktop {
     pub fn mark(&self) -> Option<Mark> {
         self.state().mark
     }
+
+    /// The OS refuses to synthesize this keystroke in the foreground application, as Windows does
+    /// for an application running elevated.
+    pub fn refuse(&self, keystroke: Keystroke) {
+        self.state().refused.push(keystroke);
+    }
 }
 
 impl Os for Desktop {
@@ -123,6 +131,9 @@ impl Os for Desktop {
 
     fn synthesize(&mut self, keystroke: Keystroke) -> Result<(), OsError> {
         let mut state = self.state();
+        if state.refused.contains(&keystroke) {
+            return Err(OsError::Keystrokes("blocked by the test".to_owned()));
+        }
         state.keystrokes.push(keystroke);
         match keystroke {
             Keystroke::Copy => {
@@ -166,16 +177,16 @@ pub struct Received {
     pub body: serde_json::Value,
 }
 
-/// What the local provider answers to the next request.
+/// What the local provider responds to the next request.
 pub struct Reply {
     status: u16,
     body: String,
-    /// When set, the answer waits for a signal on this channel.
+    /// When set, the response waits for a signal on this channel.
     hold: Option<Receiver<()>>,
 }
 
 impl Reply {
-    /// A successful answer whose first choice carries the given content.
+    /// A successful response whose first choice carries the given content.
     pub fn correction(content: &str) -> Self {
         let body = serde_json::json!({
             "id": "gen-1",
@@ -189,7 +200,7 @@ impl Reply {
         Self { status, body: r#"{"error":{"message":"refused"}}"#.to_owned(), hold: None }
     }
 
-    /// The same answer, held until the returned sender signals (or is dropped).
+    /// The same response, held until the returned sender signals (or is dropped).
     pub fn held(self) -> (Self, Sender<()>) {
         let (release, hold) = mpsc::channel();
         (Self { hold: Some(hold), ..self }, release)
@@ -226,7 +237,7 @@ impl LocalProvider {
                     };
                     let _ = sender.send(received);
                     let reply = queue.lock().unwrap().pop_front().unwrap_or_else(|| Reply::correction("unscripted"));
-                    // Answered on its own thread: a held answer does not block the next request.
+                    // Responded to on its own thread: a held response does not block the next request.
                     thread::spawn(move || {
                         if let Some(hold) = reply.hold {
                             let _ = hold.recv();
@@ -242,7 +253,7 @@ impl LocalProvider {
         Self { address, replies, received }
     }
 
-    /// Scripts the answer to the next request.
+    /// Scripts the response to the next request.
     pub fn reply(&self, reply: Reply) {
         self.replies.lock().unwrap().push_back(reply);
     }
@@ -282,7 +293,7 @@ pub fn settings(provider: &LocalProvider) -> Settings {
     }
 }
 
-/// The timing of the tests: the fake applications answer at once, so the agent waits little for
+/// The timing of the tests: the fake applications respond at once, so the agent waits little for
 /// a copy that brings nothing, and does not wait before restoring the clipboard.
 pub fn timing() -> Timing {
     Timing { copy_wait: Duration::from_millis(200), paste_settle: Duration::ZERO }
@@ -376,7 +387,7 @@ impl Outside {
 
 /// An agent whose notifications and log land in `outside`.
 pub fn watched_agent(desktop: &Desktop, settings: Settings, outside: &Outside) -> Agent {
-    agent(desktop, settings).with_notifier(outside.notifications.clone()).with_log(outside.log_path())
+    agent(desktop, settings).with_notifier(outside.notifications.clone()).with_log(AgentLog::new(outside.log_path()))
 }
 
 /// Waits until the agent has no proofread running.

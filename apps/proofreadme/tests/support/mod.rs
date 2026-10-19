@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
-use proofreadme::{UnwiredOs, Window};
+use proofreadme::{UnsupportedOs, Window};
 use proofreadme_core::{Agent, MemoryKeychain, Provider, Storage, Timing};
 
 /// The delay beyond which a test gives up waiting: never reached when all goes well.
@@ -31,7 +31,7 @@ pub fn provider(base_url: &str) -> Provider {
 
 /// An agent over the data folder simulated in `folder`.
 pub fn loaded(folder: &Path, keychain: &MemoryKeychain) -> Agent {
-    Agent::load(UnwiredOs, Storage::new(config(folder), keychain.clone()), Timing::default())
+    Agent::load(UnsupportedOs, Storage::new(config(folder), keychain.clone()), Timing::default())
 }
 
 /// The agent, with its changes of state signalled on the returned channel.
@@ -55,7 +55,7 @@ pub fn show_until(window: &mut Harness<'_, Window>, wakeups: &Receiver<()>, show
     }
 }
 
-/// What the local provider answers to the next request.
+/// What the local provider responds to the next request.
 pub struct Reply {
     status: u16,
     body: String,
@@ -63,7 +63,7 @@ pub struct Reply {
 }
 
 impl Reply {
-    /// A successful answer whose first choice carries the given content.
+    /// A successful response whose first choice carries the given content.
     pub fn correction(content: &str) -> Self {
         let body = serde_json::json!({ "choices": [{ "message": { "role": "assistant", "content": content } }] });
         Self { status: 200, body: body.to_string(), hold: None }
@@ -74,7 +74,7 @@ impl Reply {
         Self { status, body: "{}".to_owned(), hold: None }
     }
 
-    /// The same answer, held until the returned sender signals (or is dropped).
+    /// The same response, held until the returned sender signals (or is dropped).
     pub fn held(self) -> (Self, Sender<()>) {
         let (release, hold) = mpsc::channel();
         (Self { hold: Some(hold), ..self }, release)

@@ -3,8 +3,8 @@
 
 use proofreadme_core::{Keychain, KeychainError};
 
-/// The service under which the API key is stored.
-const SERVICE: &str = "io.github.jordanmarques.proofreadme";
+/// The service under which the API key is stored: the identifier of the application.
+const SERVICE: &str = crate::IDENTIFIER;
 
 /// The account of the API key within the service.
 const ACCOUNT: &str = "provider-api-key";

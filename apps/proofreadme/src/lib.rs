@@ -5,7 +5,7 @@
 //! Kairo widgets and tokens. Two screens: the home of the agent and its settings.
 //!
 //! The agent lives in the session (ADR 0001): a session icon shows its state, a second launch
-//! brings its window back, closing the window hides it, and it registers itself at login.
+//! brings its settings window back, closing the window hides it, and it registers itself at login.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -18,13 +18,13 @@ mod platform;
 mod session;
 mod settings;
 mod startup;
-mod unwired;
+mod unsupported;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 use kairo::{Button, StatusLight, TitleCard, tokens};
-use proofreadme_core::{Activity, Agent, IconState, Permission, Settings, Storage, Timing};
+use proofreadme_core::{Activity, Agent, AgentLog, IconState, LoginItem, Permission, Settings, Storage, Timing};
 
 pub use icon::{IconError, IconPort, SessionIcon};
 pub use instance::{Instance, InstanceListener, announce};
@@ -32,7 +32,7 @@ pub use keychain::SystemKeychain;
 pub use notifications::SystemNotifier;
 pub use session::{Request, RequestSender};
 pub use startup::{BACKGROUND_ARGUMENT, IDENTIFIER, LoginRegistration, RegistrationError, SystemRegistration, system_registration};
-pub use unwired::UnwiredOs;
+pub use unsupported::UnsupportedOs;
 
 /// The name of the application, shown in the title of the window.
 const NAME: &str = "ProofReadMe";
@@ -61,12 +61,11 @@ enum Action {
     OpenPermissionPane,
 }
 
-/// What the settings screen says about the session, beyond the state of the agent.
-pub(crate) struct SessionNotice<'a> {
-    /// Why the registration at login does not match the preference.
-    pub(crate) registration_error: Option<&'a str>,
-    /// True if the agent has no session icon: closing the window quits it.
-    pub(crate) no_icon: bool,
+/// The look the session icon was last given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Look {
+    icon: IconState,
+    can_cancel: bool,
 }
 
 /// The window of the agent.
@@ -77,20 +76,19 @@ pub struct Window {
     draft: Settings,
     /// The requests of the agent for the settings already followed.
     followed_requests: u64,
+    /// The requests of the agent for its window already followed.
+    followed_window_requests: u64,
     /// True since the last save succeeded, until the settings are edited again.
     saved: bool,
     presence: session::Presence,
-    /// The registration at login; `None` remembers the preference without registering anything.
+    /// The registration at login, which executes what the agent asks of it; `None` remembers the
+    /// preference without registering anything.
     registration: Option<Box<dyn LoginRegistration>>,
-    /// Why the registration at login does not match the preference, if applicable.
-    registration_error: Option<String>,
     /// The session icon, and the look it was last given.
     icon: Option<Box<dyn IconPort>>,
-    shown_look: Option<(IconState, bool)>,
+    shown_look: Option<Look>,
     /// Opens the pane of System Settings where the permission is granted.
     permission_pane: Option<Box<dyn FnMut()>>,
-    /// The permission seen at the last frame: losing it brings the window back.
-    followed_permission: Permission,
 }
 
 impl Window {
@@ -104,30 +102,22 @@ impl Window {
             screen: Screen::Home,
             draft,
             followed_requests: 0,
+            followed_window_requests: 0,
             saved: false,
             presence: session::Presence::new(),
             registration: None,
-            registration_error: None,
             icon: None,
             shown_look: None,
             permission_pane: None,
-            followed_permission: Permission::Granted,
         }
     }
 
-    /// Gives the window the port of registration at login, and at once aligns the registration
-    /// with the preference of the settings: at first launch, the agent registers.
+    /// Gives the window the port of registration at login, which executes what the agent asks of
+    /// it: at first launch, the agent registers.
     #[must_use]
     pub fn with_login_registration(mut self, registration: impl LoginRegistration + 'static) -> Self {
         self.registration = Some(Box::new(registration));
-        self.align_registration();
-        self
-    }
-
-    /// Tells the window why the agent cannot register at login: the settings say so.
-    #[must_use]
-    pub fn with_registration_error(mut self, cause: &RegistrationError) -> Self {
-        self.registration_error = Some(format!("Registration at login is impossible: {cause}"));
+        self.follow_login_item();
         self
     }
 
@@ -178,16 +168,18 @@ impl Window {
         self.presence.is_hidden()
     }
 
-    /// Registers the agent at login or removes its registration, according to the preference of
-    /// the settings, and keeps the possible failure for the settings screen.
-    fn align_registration(&mut self) {
+    /// Executes the registration at login the agent asks for, if any, and reports its outcome.
+    fn follow_login_item(&mut self) {
         let Some(registration) = self.registration.as_mut() else { return };
-        let result = if self.agent.settings().launch_at_login {
-            registration.register().map_err(|cause| format!("Registration at login failed: {cause}"))
-        } else {
-            registration.unregister().map_err(|cause| format!("Removing the registration at login failed: {cause}"))
+        let Some(item) = self.agent.take_login_item() else { return };
+        let outcome = match item {
+            LoginItem::Register => registration.register(),
+            LoginItem::Unregister => registration.unregister(),
         };
-        self.registration_error = result.err();
+        match outcome {
+            Ok(()) => self.agent.login_item_done(item, Ok(())),
+            Err(cause) => self.agent.login_item_done(item, Err(&cause)),
+        }
     }
 
     /// Handles what is asked of the window from the session icon or a second launch.
@@ -207,11 +199,11 @@ impl Window {
 
     /// Gives the session icon the look of the state, when it changed.
     fn update_icon(&mut self, state: &proofreadme_core::State) {
-        let look = (state.icon(), state.can_cancel());
+        let look = Look { icon: state.icon(), can_cancel: state.can_cancel() };
         if let Some(icon) = self.icon.as_mut()
             && self.shown_look != Some(look)
         {
-            icon.show(look.0, look.1);
+            icon.show(look.icon, look.can_cancel);
             self.shown_look = Some(look);
         }
     }
@@ -231,13 +223,7 @@ impl Window {
     fn act(&mut self, action: Action) {
         match action {
             Action::OpenSettings => self.open_settings(),
-            Action::Save => {
-                let before = self.agent.settings().launch_at_login;
-                self.saved = self.agent.save_settings(self.draft.clone()).is_ok();
-                if self.saved && self.draft.launch_at_login != before {
-                    self.align_registration();
-                }
-            }
+            Action::Save => self.saved = self.agent.save_settings(self.draft.clone()).is_ok(),
             // A refusal of the Test lands in the state of the agent, which the screen shows.
             Action::Test => {
                 let _ = self.agent.test_provider(&self.draft);
@@ -257,15 +243,16 @@ impl eframe::App for Window {
     /// alone when the window is hidden.
     fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_requests(context);
+        self.follow_login_item();
         let state = self.agent.state();
         let needs_the_settings = state.settings_requests > self.followed_requests;
         if needs_the_settings {
             self.followed_requests = state.settings_requests;
             self.open_settings();
         }
-        let permission_lost = state.permission != Permission::Granted && state.permission != self.followed_permission;
-        self.followed_permission = state.permission;
-        self.presence.update(context, needs_the_settings || permission_lost);
+        let needs_the_window = state.window_requests > self.followed_window_requests;
+        self.followed_window_requests = state.window_requests;
+        self.presence.update(context, needs_the_settings || needs_the_window);
         self.update_icon(&state);
     }
 
@@ -281,13 +268,10 @@ impl eframe::App for Window {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(tokens::BG_BASE).inner_margin(tokens::SPACE_6)).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(tokens::SPACE_5, tokens::SPACE_5);
-                let pane = permission::show(ui, state.permission, self.permission_pane.is_some());
+                let pane = permission::show(ui, &state, self.permission_pane.is_some());
                 action = match self.screen {
                     Screen::Home => home(ui, &state),
-                    Screen::Settings => {
-                        let session = SessionNotice { registration_error: self.registration_error.as_deref(), no_icon: self.presence.has_no_icon() };
-                        settings::show(ui, &mut self.draft, &state, self.saved, &session)
-                    }
+                    Screen::Settings => settings::show(ui, &mut self.draft, &state, self.saved, self.presence.has_no_icon()),
                 }
                 .or(pane);
             });
@@ -305,6 +289,7 @@ impl eframe::App for Window {
 fn home(ui: &mut egui::Ui, state: &proofreadme_core::State) -> Option<Action> {
     ui.add(TitleCard::new("PROOFREADME").kicker("AGENT 校正").height(240.0).title_size(tokens::TEXT_4XL));
     let light = match state.activity {
+        Activity::Idle if state.no_trigger.is_some() => StatusLight::alert().label("Trigger off").jp("停止"),
         Activity::Idle if state.permission != Permission::Granted => StatusLight::warn().label("Waiting for permission").jp("許可待ち"),
         Activity::Idle => StatusLight::ok().label("Listening").jp("待機"),
         Activity::Proofreading(_) => StatusLight::info().blink(true).label("Proofreading").jp("校正中"),
@@ -367,33 +352,32 @@ fn config_path() -> Result<PathBuf, LaunchError> {
     data_folder().map(|folder| folder.join("config.toml"))
 }
 
-/// The location of the agent log, one line per failed proofread: `logs/agent.txt` in the data
-/// folder of the application.
+/// The location of the agent log, one line per failed proofread and per problem of a platform
+/// adapter: `logs/agent.txt` in the data folder of the application.
 fn log_path() -> Result<PathBuf, LaunchError> {
     data_folder().map(|folder| folder.join("logs").join("agent.txt"))
 }
 
 /// Runs the session agent and returns when it quits.
 ///
-/// If an agent is already running in the session, its window is brought back to the foreground and
-/// the function returns at once. Launched with [`BACKGROUND_ARGUMENT`] (which is what the
-/// registration at login does), the agent starts with its window hidden.
+/// If an agent is already running in the session, its settings window is brought back to the
+/// foreground and the function returns at once. Launched with [`BACKGROUND_ARGUMENT`] (which is
+/// what the registration at login does), the agent starts with its window hidden.
 pub fn run() -> Result<(), LaunchError> {
     let config = config_path()?;
-    let log = log_path()?;
+    let log = AgentLog::new(log_path()?);
     let (sender, requests) = RequestSender::new();
     // Nothing of what follows prevents the agent from starting: failing a single instance, an icon
-    // or a registration, it stays usable, and the cause is told on the error output or in the
+    // or a registration, it stays usable, and the cause is told in the agent log or in the
     // settings.
     match config.parent().map(|folder| announce(folder, "agent")) {
         Some(Ok(Instance::AlreadyRunning)) => return Ok(()),
         Some(Ok(Instance::First(listener))) => {
-            let for_the_next_launches = sender.clone();
-            if let Err(error) = listener.listen(move || for_the_next_launches.send(Request::Open)) {
-                eprintln!("ProofReadMe: the single instance is not guaranteed: {error}");
+            if let Err(error) = listener.listen(sender.clone()) {
+                log.note(&format!("the single instance is not guaranteed: {error}"));
             }
         }
-        Some(Err(error)) => eprintln!("ProofReadMe: the single instance is not guaranteed: {error}"),
+        Some(Err(error)) => log.note(&format!("the single instance is not guaranteed: {error}")),
         None => {}
     }
     let in_background = std::env::args().any(|argument| argument == BACKGROUND_ARGUMENT);
@@ -406,21 +390,21 @@ pub fn run() -> Result<(), LaunchError> {
             sender.wake(creation.egui_ctx.clone());
             let context = creation.egui_ctx.clone();
             let agent = Agent::load(platform::os(), storage, Timing::default())
-                .with_notifier(SystemNotifier::new())
-                .with_log(log)
+                .with_notifier(SystemNotifier::new(log.clone()))
+                .with_log(log.clone())
                 .on_change(move || context.request_repaint());
             platform::listen(&agent);
-            let mut window = Window::new(agent).with_requests(requests);
-            if let Some(open) = platform::permission_pane() {
+            let mut window = Window::new(agent.clone()).with_requests(requests);
+            if let Some(open) = platform::permission_pane(&agent) {
                 window = window.with_permission_pane(open);
             }
             match system_registration() {
                 Ok(Some(registration)) => window = window.with_login_registration(registration),
                 Ok(None) => {}
-                Err(cause) => window = window.with_registration_error(&cause),
+                Err(cause) => agent.login_unavailable(&cause),
             }
             // The icon is created here: on the main thread, with the event loop already started.
-            match SessionIcon::install(&sender) {
+            match SessionIcon::install(&sender, log) {
                 Ok(icon) => {
                     window = window.with_session_icon(icon);
                     if in_background {
@@ -431,7 +415,7 @@ pub fn run() -> Result<(), LaunchError> {
                 // be quit: its window stays shown, even launched in the background, and closing it
                 // quits it.
                 Err(error) => {
-                    eprintln!("ProofReadMe: the session icon could not be installed: {error}. Closing the window quits ProofReadMe.");
+                    agent.note(&format!("the session icon could not be installed: {error}. Closing the window quits ProofReadMe."));
                     window = window.without_session_icon();
                 }
             }

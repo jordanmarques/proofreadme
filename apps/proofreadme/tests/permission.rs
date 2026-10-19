@@ -105,6 +105,26 @@ fn a_permission_lost_brings_the_hidden_window_back() {
 }
 
 #[test]
+fn a_hook_that_cannot_listen_brings_the_hidden_window_back_and_says_why() {
+    let folder = tempfile::tempdir().unwrap();
+    let (agent, wakeups) = observed(configured(folder.path()));
+    let hook = agent.hook();
+    let mut window = Harness::builder().build_eframe(move |creation| {
+        kairo::install(&creation.egui_ctx);
+        Window::new(agent).in_background()
+    });
+    window.run_ok();
+    assert!(window.state().is_hidden());
+
+    hook.failed(&"Windows refused the keyboard hook");
+    show_until(&mut window, &wakeups, |window| !window.state().is_hidden());
+    window.run_ok();
+
+    window.get_by_label_contains("No trigger: Windows refused the keyboard hook");
+    assert!(window.query_by_label_contains("LISTENING").is_none(), "the agent does not listen");
+}
+
+#[test]
 fn the_panel_shows_on_the_settings_too() {
     let folder = tempfile::tempdir().unwrap();
     let agent = configured(folder.path());

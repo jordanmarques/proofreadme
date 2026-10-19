@@ -5,8 +5,8 @@ mod support;
 
 use std::thread;
 
-use proofreadme_core::{Direction, IconState, Key, KeyEvent, Modifier, Permission};
-use support::{Desktop, LocalProvider, Reply, agent, settings, wait_idle};
+use proofreadme_core::{Direction, IconState, Key, KeyEvent, Modifier, NoTrigger, Permission};
+use support::{Desktop, LocalProvider, Outside, Reply, agent, settings, wait_idle, watched_agent};
 
 #[test]
 fn an_agent_starts_with_the_permission_granted() {
@@ -41,6 +41,40 @@ fn a_permission_granted_that_needs_a_relaunch_keeps_the_alert_icon() {
 
     assert_eq!(agent.state().permission, Permission::RelaunchNeeded);
     assert_eq!(agent.state().icon(), IconState::Alert);
+}
+
+#[test]
+fn losing_the_permission_asks_for_the_window_once_per_loss() {
+    let provider = LocalProvider::start();
+    let agent = agent(&Desktop::new(), settings(&provider));
+    let hook = agent.hook();
+    assert_eq!(agent.state().window_requests, 0);
+
+    hook.permission(Permission::Missing);
+    hook.permission(Permission::Missing);
+    let after_the_loss = agent.state().window_requests;
+    hook.permission(Permission::Granted);
+    let once_granted = agent.state().window_requests;
+    hook.permission(Permission::RelaunchNeeded);
+
+    assert_eq!(after_the_loss, 1, "a loss reported twice is one loss");
+    assert_eq!(once_granted, 1, "a granted permission needs nobody");
+    assert_eq!(agent.state().window_requests, 2);
+}
+
+#[test]
+fn a_hook_that_cannot_listen_shows_the_alert_icon_asks_for_the_window_and_is_logged() {
+    let provider = LocalProvider::start();
+    let outside = Outside::new();
+    let agent = watched_agent(&Desktop::new(), settings(&provider), &outside);
+
+    agent.hook().failed(&"Windows refused the keyboard hook");
+
+    let state = agent.state();
+    assert_eq!(state.no_trigger, Some(NoTrigger("Windows refused the keyboard hook".to_owned())));
+    assert_eq!(state.icon(), IconState::Alert, "the agent is deaf to the trigger");
+    assert_eq!(state.window_requests, 1, "the window says why");
+    assert!(outside.log().contains("no trigger: Windows refused the keyboard hook"), "{}", outside.log());
 }
 
 #[test]

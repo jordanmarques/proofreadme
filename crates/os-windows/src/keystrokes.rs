@@ -25,7 +25,8 @@ pub(crate) fn send(keystroke: Keystroke) -> Result<(), OsError> {
     if sent == count {
         Ok(())
     } else {
-        // Blocked by UIPI (an elevated foreground application) or by another program.
+        // Blocked by UIPI (an elevated foreground application) or by another program. A refused
+        // copy ends the proofread silently, a refused paste fails it: the agent decides.
         Err(OsError::Keystrokes(format!("SendInput sent {sent} of {count} events: {}", std::io::Error::last_os_error())))
     }
 }

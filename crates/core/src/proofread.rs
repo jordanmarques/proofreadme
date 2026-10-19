@@ -65,9 +65,13 @@ struct Exchange<'a> {
     foreground: Option<String>,
 }
 
-/// Copies the selection, then puts its correction in place. Nothing selected ends here, silently.
+/// Copies the selection, then puts its correction in place. Nothing selected ends here, silently,
+/// and so does a copy the OS refuses to synthesize: on Windows an application running elevated
+/// receives no keystroke of the agent, and nothing is captured from it (ADR 0002).
 fn replace_selection(shared: &Shared, settings: &Settings, exchange: Exchange<'_>) -> Result<Outcome, ProofreadError> {
-    shared.os().synthesize(Keystroke::Copy)?;
+    if shared.os().synthesize(Keystroke::Copy).is_err() {
+        return Ok(Outcome::Finished);
+    }
     let selection = match copied_selection(shared, &exchange)? {
         Copied::Selection(selection) => selection,
         Copied::Nothing => return Ok(Outcome::Finished),
@@ -75,7 +79,7 @@ fn replace_selection(shared: &Shared, settings: &Settings, exchange: Exchange<'_
     };
     shared.step(Step::Requesting);
     provider::send_to(settings, &selection, exchange.sender, Signal::Correction);
-    let correction = match wait_for_correction(exchange.signals, settings.timeout) {
+    let correction = match wait_for_correction(exchange.signals, settings.request_timeout()) {
         Signal::Correction(correction) => correction?,
         Signal::Cancel => return Ok(Outcome::Cancelled),
     };
@@ -98,18 +102,13 @@ fn replace_selection(shared: &Shared, settings: &Settings, exchange: Exchange<'_
 }
 
 /// The correction or the cancel, whichever comes first. The provider gives up at the timeout;
-/// should its thread still not answer, the wait gives up a little later.
+/// should its thread still not report, the wait gives up a little later.
 fn wait_for_correction(signals: &Receiver<Signal>, timeout: Duration) -> Signal {
-    /// What the wait grants the provider beyond the timeout, to report its own cause.
-    const GRACE: Duration = Duration::from_secs(5);
-
-    let deadline = wait::deadline(timeout.saturating_add(GRACE));
+    let deadline = wait::deadline(timeout.saturating_add(wait::GRACE));
     match signals.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         Ok(signal) => signal,
         Err(RecvTimeoutError::Timeout) => Signal::Correction(Err(ProofreadError::Timeout)),
-        Err(RecvTimeoutError::Disconnected) => {
-            Signal::Correction(Err(ProofreadError::Thread("the request thread ended without an answer".to_owned())))
-        }
+        Err(RecvTimeoutError::Disconnected) => Signal::Correction(Err(ProofreadError::request_thread_ended())),
     }
 }
 

@@ -32,7 +32,7 @@ ProofReadMe handles text the user is writing, in any application, and a damaged 
 
 ## Language and vocabulary
 
-- Everything in the repository is in English. The `{{TEXTE}}` placeholder and the default proofreading prompt are the agreed exceptions.
+- Everything in the repository is in English. The `{{TEXTE}}` placeholder, the default proofreading prompt and `TEST_SENTENCE` (French and English, to exercise both rules of the default prompt) are the agreed exceptions.
 - Domain concepts use the terms of `GLOSSARY.md` (trigger, selection, proofread, correction, proofreading prompt, provider, agent), in identifiers, tests, docs and UI labels. A synonym listed under `_Avoid_` (hotkey, answer, result, backend, LLM, daemon…) is a finding.
 - UI labels follow Kairo: uppercase English, then short Japanese dressing (`AGENT 校正`).
 

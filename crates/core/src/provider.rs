@@ -4,16 +4,12 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
 
 use serde::Deserialize;
 
 use crate::cleaning;
 use crate::error::ProofreadError;
 use crate::settings::{PLACEHOLDER, Settings};
-
-/// The longest timeout actually applied: a larger one from the settings is brought down to it.
-const MAX_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// A request sent to the provider, whose correction arrives later.
 #[derive(Debug)]
@@ -25,7 +21,7 @@ impl PendingCorrection {
     /// Waits for the correction, cleaned. The wait is bounded by the timeout of the settings.
     pub fn wait(self) -> Result<String, ProofreadError> {
         // The thread always sends before ending, unless it panicked.
-        self.receiver.recv().unwrap_or_else(|_| Err(ProofreadError::Thread("the request thread ended without an answer".to_owned())))
+        self.receiver.recv().unwrap_or_else(|_| Err(ProofreadError::request_thread_ended()))
     }
 
     /// The correction if it has arrived, without waiting.
@@ -77,7 +73,7 @@ fn correct(settings: &Settings, selection: &str) -> Result<String, ProofreadErro
     cleaning::clean(&returned, selection)
 }
 
-/// The text of the first choice returned by the provider.
+/// The text of the first choice of the response of the provider.
 fn send(settings: &Settings, selection: &str) -> Result<String, ProofreadError> {
     let provider = &settings.provider;
     let url = format!("{}/chat/completions", provider.base_url.trim_end_matches('/'));
@@ -89,7 +85,7 @@ fn send(settings: &Settings, selection: &str) -> Result<String, ProofreadError> 
         body["reasoning"] = serde_json::json!({ "enabled": true });
     }
     let agent: ureq::Agent =
-        ureq::Agent::config_builder().timeout_global(Some(settings.timeout.min(MAX_TIMEOUT))).http_status_as_error(false).build().into();
+        ureq::Agent::config_builder().timeout_global(Some(settings.request_timeout())).http_status_as_error(false).build().into();
     let mut response = agent
         .post(&url)
         .header("Authorization", &format!("Bearer {}", provider.api_key))
@@ -101,8 +97,8 @@ fn send(settings: &Settings, selection: &str) -> Result<String, ProofreadError> 
         return Err(ProofreadError::Status(status));
     }
     let text = response.body_mut().read_to_string().map_err(failure)?;
-    let completion: Completion = serde_json::from_str(&text).map_err(|_| ProofreadError::MalformedAnswer)?;
-    completion.choices.into_iter().next().and_then(|choice| choice.message.content).ok_or(ProofreadError::MalformedAnswer)
+    let completion: Completion = serde_json::from_str(&text).map_err(|_| ProofreadError::MalformedResponse)?;
+    completion.choices.into_iter().next().and_then(|choice| choice.message.content).ok_or(ProofreadError::MalformedResponse)
 }
 
 /// The cause of a failed exchange. The message of ureq names the URL and the transport error,

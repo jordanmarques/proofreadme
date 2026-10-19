@@ -3,8 +3,8 @@
 
 mod support;
 
-use proofreadme_core::{IconState, Modifier};
-use support::{Desktop, Keyboard, LocalProvider, Reply, agent, settings, wait_idle};
+use proofreadme_core::{IconState, Modifier, Notification, ProofreadError};
+use support::{Desktop, Keyboard, LocalProvider, Outside, Reply, agent, settings, wait_idle, watched_agent};
 
 #[test]
 fn a_listening_agent_shows_the_idle_icon_and_offers_no_cancel() {
@@ -39,30 +39,20 @@ fn a_running_proofread_shows_the_running_icon_and_offers_to_cancel() {
 }
 
 #[test]
-fn a_failed_proofread_shows_the_alert_icon_until_the_next_one_starts() {
+fn a_failed_proofread_is_notified_and_leaves_the_idle_icon() {
     let provider = LocalProvider::start();
     provider.reply(Reply::status(500));
-    let (reply, release) = Reply::correction("Hello world").held();
-    provider.reply(reply);
     let desktop = Desktop::new();
     desktop.select("Helo world");
-    let agent = agent(&desktop, settings(&provider));
-    let mut keyboard = Keyboard::new();
+    let outside = Outside::new();
+    let agent = watched_agent(&desktop, settings(&provider), &outside);
 
-    keyboard.double_press(&agent, Modifier::Ctrl);
-    wait_idle(&agent);
-    let after_the_failure = agent.state();
-    keyboard.wait(std::time::Duration::from_secs(1));
-    keyboard.double_press(&agent, Modifier::Ctrl);
-    provider.next_request();
-    provider.next_request();
-    let next = agent.state();
-    release.send(()).unwrap();
+    Keyboard::new().double_press(&agent, Modifier::Ctrl);
     wait_idle(&agent);
 
-    assert_eq!(after_the_failure.icon(), IconState::Alert);
-    assert!(!after_the_failure.can_cancel(), "nothing runs any more");
-    assert_eq!(next.icon(), IconState::Running, "a new proofread clears the alert");
+    assert_eq!(outside.sent(), vec![Notification::Failed(ProofreadError::Status(500))], "the notification tells the failure");
+    assert_eq!(agent.state().icon(), IconState::Idle, "the alert icon is kept for a deaf agent");
+    assert!(!agent.state().can_cancel(), "nothing runs any more");
 }
 
 #[test]

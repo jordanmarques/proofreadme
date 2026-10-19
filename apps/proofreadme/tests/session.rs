@@ -19,8 +19,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use proofreadme::{IconPort, LoginRegistration, RegistrationError, Request, Window};
 use proofreadme_core::{
-    Agent, ClipboardContent, DEFAULT_TRIGGER, Direction, IconState, Key, KeyEvent, Keystroke, Mark, MemoryKeychain, Os, OsError, Settings, Storage,
-    Timing,
+    Agent, ClipboardContent, DEFAULT_TRIGGER, Direction, IconState, Key, KeyEvent, Keystroke, Mark, MemoryKeychain, Os, OsError, Permission,
+    Settings, Storage, Timing,
 };
 use support::{API_KEY, DELAY, config, loaded, observed, show_until};
 
@@ -132,7 +132,7 @@ fn trigger(agent: &Agent) {
 const SWITCH: &str = "LAUNCH AT LOGIN";
 
 #[test]
-fn the_session_icon_follows_the_agent_from_idle_to_running_to_alert() {
+fn the_session_icon_follows_the_agent_from_idle_to_running_and_back_after_a_failure() {
     let folder = tempfile::tempdir().unwrap();
     let keychain = MemoryKeychain::with_key(API_KEY);
     configured(folder.path(), false);
@@ -148,9 +148,23 @@ fn the_session_icon_follows_the_agent_from_idle_to_running_to_alert() {
     trigger(window.state().agent());
     show_until(&mut window, &wakeups, |_| icon.looks().last() == Some(&(IconState::Running, true)));
     release.send(()).unwrap();
-    show_until(&mut window, &wakeups, |_| icon.looks().last() == Some(&(IconState::Alert, false)));
+    show_until(&mut window, &wakeups, |_| icon.looks().last() == Some(&(IconState::Idle, false)));
 
-    assert_eq!(icon.looks(), [(IconState::Idle, false), (IconState::Running, true), (IconState::Alert, false)]);
+    assert_eq!(icon.looks(), [(IconState::Idle, false), (IconState::Running, true), (IconState::Idle, false)], "a failure is notified, not shown");
+}
+
+#[test]
+fn a_permission_lost_gives_the_session_icon_the_alert_look() {
+    let folder = tempfile::tempdir().unwrap();
+    let (agent, wakeups) = observed(configured(folder.path(), false));
+    let hook = agent.hook();
+    let icon = SimulatedIcon::default();
+    let port = icon.clone();
+    let mut window = Harness::builder().build_eframe(|_| Window::new(agent).with_session_icon(port));
+    window.run_ok();
+
+    hook.permission(Permission::Missing);
+    show_until(&mut window, &wakeups, |_| icon.looks().last() == Some(&(IconState::Alert, false)));
 }
 
 #[test]

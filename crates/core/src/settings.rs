@@ -18,6 +18,10 @@ pub const DEFAULT_MODEL: &str = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:f
 /// The default timeout of a request to the provider.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 
+/// The longest timeout of a request to the provider: the form offers no more, a larger one read
+/// from the config is brought down to it, and the provider never waits longer.
+pub const MAX_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// The default proofreading prompt, agreed on in the spec (in French, as agreed).
 pub const DEFAULT_PROMPT: &str = r"Tu es correcteur. Le texte à relire se trouve entre les balises <texte> et </texte>.
 
@@ -88,7 +92,7 @@ pub struct Settings {
     pub prompt: String,
     /// Sends `"reasoning": {"enabled": true}` when on.
     pub reasoning: bool,
-    /// The longest a request to the provider may take, answer included.
+    /// The longest a request to the provider may take, response included, up to [`MAX_TIMEOUT`].
     pub timeout: Duration,
     /// Whether the agent starts with the session.
     pub launch_at_login: bool,
@@ -112,6 +116,11 @@ impl Settings {
     /// Checks the rules a proofreading prompt follows before it is saved or tested.
     pub(crate) fn check(&self) -> Result<(), SettingsError> {
         if self.prompt.contains(PLACEHOLDER) { Ok(()) } else { Err(SettingsError::MissingPlaceholder) }
+    }
+
+    /// The timeout actually applied to a request: that of the settings, at most [`MAX_TIMEOUT`].
+    pub(crate) fn request_timeout(&self) -> Duration {
+        self.timeout.min(MAX_TIMEOUT)
     }
 }
 

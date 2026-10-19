@@ -4,7 +4,7 @@
 
 mod support;
 
-use proofreadme_core::{ClipboardContent, Modifier, Notification, ProofreadError};
+use proofreadme_core::{ClipboardContent, IconState, Keystroke, Modifier, Notification, OsError, ProofreadError};
 use std::time::Duration;
 
 use support::{API_KEY, Desktop, Keyboard, LocalProvider, MODEL, Outside, Reply, settings, wait_idle, watched_agent};
@@ -128,4 +128,48 @@ fn a_proofread_that_succeeds_writes_nothing_and_notifies_nothing() {
     assert_eq!(desktop.pasted(), vec!["Hello world".to_owned()]);
     assert!(outside.sent().is_empty());
     assert_eq!(outside.log(), "");
+}
+
+#[test]
+fn a_copy_the_os_refuses_ends_silently_like_an_empty_selection() {
+    let provider = LocalProvider::start();
+    let desktop = Desktop::new();
+    desktop.user_copies(ClipboardContent::text("copied before".to_owned()));
+    desktop.select("Helo world");
+    // An application running elevated on Windows: the keystrokes of the agent do not reach it.
+    desktop.refuse(Keystroke::Copy);
+    let outside = Outside::new();
+    let agent = watched_agent(&desktop, settings(&provider), &outside);
+
+    Keyboard::new().double_press(&agent, Modifier::Ctrl);
+    wait_idle(&agent);
+
+    assert!(provider.received().is_empty(), "nothing was captured, nothing is sent");
+    assert!(outside.sent().is_empty(), "nothing is notified");
+    assert_eq!(outside.log(), "", "nothing is logged");
+    assert_eq!(agent.state().last_failure, None);
+    assert_eq!(agent.state().icon(), IconState::Idle);
+    assert_eq!(desktop.selection().as_deref(), Some("Helo world"));
+    assert_eq!(desktop.clipboard(), ClipboardContent::text("copied before".to_owned()));
+}
+
+#[test]
+fn a_paste_the_os_refuses_is_a_failure() {
+    let provider = LocalProvider::start();
+    provider.reply(Reply::correction("Hello world"));
+    let desktop = Desktop::new();
+    desktop.user_copies(ClipboardContent::text("copied before".to_owned()));
+    desktop.select("Helo world");
+    desktop.refuse(Keystroke::Paste);
+    let outside = Outside::new();
+    let agent = watched_agent(&desktop, settings(&provider), &outside);
+
+    Keyboard::new().double_press(&agent, Modifier::Ctrl);
+    wait_idle(&agent);
+
+    let sent = outside.sent();
+    assert!(matches!(sent.as_slice(), [Notification::Failed(ProofreadError::Os(OsError::Keystrokes(_)))]), "{sent:?}");
+    assert_eq!(outside.log().lines().count(), 1);
+    assert_eq!(desktop.selection().as_deref(), Some("Helo world"));
+    assert_eq!(desktop.clipboard(), ClipboardContent::text("copied before".to_owned()));
 }
