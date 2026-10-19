@@ -3,6 +3,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod package;
+mod version;
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
@@ -13,7 +14,12 @@ cargo xtask <command>
   ci       format, clippy without a warning, layers, tests (stops at the first failure)
   package  release build of the package of the host OS in dist/: ProofReadMe.app (macOS), signed
            with the certificate named by PROOFREADME_SIGNING_IDENTITY (default \"ProofReadMe
-           Signing\") or ad hoc with --ad-hoc; ProofReadMe.exe (Windows)
+           Signing\"); ProofReadMe.exe (Windows)
+           --ad-hoc signs the macOS bundle ad hoc instead of with the certificate
+           --universal builds the macOS bundle for Apple silicon and Intel
+           --dmg also writes dist/ProofReadMe.dmg (macOS)
+           --msi also writes dist/ProofReadMe.msi, the installer (Windows, needs the `wix` tool)
+  version  prints the workspace version; `version set 1.2.0` writes it (Cargo.toml and Cargo.lock)
 ";
 
 /// The layers of the workspace: each crate and the crates it is not allowed to pull in.
@@ -53,6 +59,7 @@ fn main() -> ExitCode {
     let result = match arguments.first().map(String::as_str) {
         Some("ci") => ci(),
         Some("package") => package::package(&arguments[1..]),
+        Some("version") => version::version(&arguments[1..]),
         Some("help" | "--help" | "-h") | None => {
             print!("{HELP}");
             Ok(())
