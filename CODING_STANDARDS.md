@@ -1,6 +1,6 @@
 # Coding standards
 
-Read during review. These are the judgement calls no tool checks. Formatting, the never-crash lints, `#![forbid(unsafe_code)]`, the layer boundaries and `Harness::run` in the app are enforced by `cargo xtask ci`.
+Read during review. These are the judgement calls no tool checks. Formatting, the never-crash lints, `#![forbid(unsafe_code)]` (lifted only in `crates/os-windows`, each `unsafe` block with its `SAFETY` comment), the layer boundaries and `Harness::run` in the app are enforced by `cargo xtask ci`.
 
 ## The text of the user
 

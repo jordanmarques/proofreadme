@@ -3300,6 +3300,7 @@ dependencies = [
  "keyring",
  "proofreadme-core",
  "proofreadme-icon",
+ "proofreadme-os-windows",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
@@ -3325,6 +3326,17 @@ dependencies = [
 [[package]]
 name = "proofreadme-icon"
 version = "0.1.0"
+
+[[package]]
+name = "proofreadme-os-windows"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "clipboard-win",
+ "proofreadme-core",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "pxfm"

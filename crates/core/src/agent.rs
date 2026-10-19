@@ -188,7 +188,9 @@ impl Drop for Ending {
     }
 }
 
-/// The headless agent.
+/// The headless agent. A clone is a handle on the same agent: the keyboard hook keeps one on its
+/// own thread to pass it the key events.
+#[derive(Clone)]
 pub struct Agent {
     shared: Arc<Shared>,
 }

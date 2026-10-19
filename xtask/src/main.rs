@@ -13,9 +13,32 @@ cargo xtask <command>
 
 /// The layers of the workspace: each crate and the crates it is not allowed to pull in.
 const LAYERS: &[(&str, &[&str])] = &[
-    ("proofreadme-core", &["egui", "eframe", "kairo", "winit", "keyring", "dirs", "tray-icon", "auto-launch", "interprocess"]),
+    (
+        "proofreadme-core",
+        &[
+            "egui",
+            "eframe",
+            "kairo",
+            "winit",
+            "keyring",
+            "dirs",
+            "tray-icon",
+            "auto-launch",
+            "interprocess",
+            "proofreadme-os-windows",
+            "arboard",
+            "clipboard-win",
+        ],
+    ),
     ("kairo", &["proofreadme-core", "proofreadme"]),
 ];
+
+/// The attribute that lifts the denial of `unsafe` (spelt in two parts so that this file does not
+/// contain it).
+const ALLOW_UNSAFE: &str = concat!("allow(", "unsafe_code)");
+
+/// The only folders whose code may lift `unsafe_code`: the platform adapters.
+const UNSAFE_ALLOWED: &[&str] = &["crates/os-windows"];
 
 fn main() -> ExitCode {
     let command = std::env::args().nth(1);
@@ -44,6 +67,7 @@ fn ci() -> Result<(), String> {
         "cargo clippy --workspace --all-targets --locked -- -D warnings",
     )?;
     layers()?;
+    unsafe_confined()?;
     run(cargo().args(["test", "--workspace", "--locked"]), "cargo test --workspace --locked")?;
     eprintln!("xtask ci: all green");
     Ok(())
@@ -67,6 +91,48 @@ fn layers() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Checks that `unsafe_code` is lifted nowhere outside [`UNSAFE_ALLOWED`].
+fn unsafe_confined() -> Result<(), String> {
+    eprintln!("$ unsafe confined to {}", UNSAFE_ALLOWED.join(", "));
+    let root = root();
+    let mut sources = Vec::new();
+    for folder in ["crates", "apps", "xtask"] {
+        collect_sources(&root.join(folder), &mut sources)?;
+    }
+    let mut offenders = Vec::new();
+    for path in sources {
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let relative = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+        if lifts_unsafe(&relative, &text, UNSAFE_ALLOWED) {
+            offenders.push(relative);
+        }
+    }
+    if offenders.is_empty() { Ok(()) } else { Err(format!("unsafe code allowed outside {}: {}", UNSAFE_ALLOWED.join(", "), offenders.join(", "))) }
+}
+
+/// The `.rs` files under `folder`, `target` folders left out.
+fn collect_sources(folder: &std::path::Path, sources: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| format!("{}: {e}", folder.display()))?.path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name != "target") {
+                collect_sources(&path, sources)?;
+            }
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            sources.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// True if this source, at this path relative to the root, lifts `unsafe_code` outside the allowed
+/// folders.
+fn lifts_unsafe(path: &str, text: &str, allowed: &[&str]) -> bool {
+    let inside = allowed.iter().any(|folder| path.starts_with(&format!("{folder}/")));
+    !inside && text.lines().any(|line| line.contains(ALLOW_UNSAFE) && !line.trim_start().starts_with("//"))
 }
 
 /// The forbidden crates present in the output of `cargo tree --prefix none`, each named once.
@@ -100,7 +166,25 @@ fn run(command: &mut Command, description: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::forbidden_dependencies;
+    use super::{ALLOW_UNSAFE, forbidden_dependencies, lifts_unsafe};
+
+    const ALLOWED: &[&str] = &["crates/os-windows"];
+
+    #[test]
+    fn unsafe_code_is_allowed_in_the_windows_adapters() {
+        assert!(!lifts_unsafe("crates/os-windows/src/lib.rs", &format!("#![{ALLOW_UNSAFE}]\n"), ALLOWED));
+    }
+
+    #[test]
+    fn unsafe_code_allowed_anywhere_else_is_refused() {
+        assert!(lifts_unsafe("apps/proofreadme/src/lib.rs", &format!("#[{ALLOW_UNSAFE}]\nmod hook;\n"), ALLOWED));
+        assert!(lifts_unsafe("crates/os-windows-extra/src/lib.rs", &format!("#![{ALLOW_UNSAFE}]\n"), ALLOWED));
+    }
+
+    #[test]
+    fn a_crate_forbidding_unsafe_code_or_a_comment_about_it_is_accepted() {
+        assert!(!lifts_unsafe("crates/core/src/lib.rs", &format!("#![forbid(unsafe_code)]\n// no {ALLOW_UNSAFE} here\n"), ALLOWED));
+    }
 
     #[test]
     fn a_core_with_no_graphical_dependency_is_accepted() {

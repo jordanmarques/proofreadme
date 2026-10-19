@@ -12,6 +12,7 @@
 mod icon;
 mod instance;
 mod keychain;
+mod platform;
 mod session;
 mod settings;
 mod startup;
@@ -363,7 +364,8 @@ pub fn run() -> Result<(), LaunchError> {
             kairo::install(&creation.egui_ctx);
             sender.wake(creation.egui_ctx.clone());
             let context = creation.egui_ctx.clone();
-            let agent = Agent::load(UnwiredOs, storage, Timing::default()).on_change(move || context.request_repaint());
+            let agent = Agent::load(platform::os(), storage, Timing::default()).on_change(move || context.request_repaint());
+            platform::listen(&agent);
             let mut window = Window::new(agent).with_requests(requests);
             match system_registration() {
                 Ok(Some(registration)) => window = window.with_login_registration(registration),

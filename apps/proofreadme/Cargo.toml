@@ -25,6 +25,10 @@ tray-icon = { workspace = true }
 auto-launch = { workspace = true }
 interprocess = { workspace = true }
 
+# The adapters of the OS port on Windows.
+[target.'cfg(windows)'.dependencies]
+proofreadme-os-windows = { workspace = true }
+
 # The "accessory" activation policy (no Dock icon) is set on the winit event loop, the one
 # eframe uses.
 [target.'cfg(target_os = "macos")'.dependencies]

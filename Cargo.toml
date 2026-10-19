@@ -14,6 +14,7 @@ repository = "https://github.com/jordanmarques/proofreadme"
 proofreadme-core = { path = "crates/core" }
 proofreadme-icon = { path = "crates/icon" }
 kairo = { path = "crates/kairo" }
+proofreadme-os-windows = { path = "crates/os-windows" }
 
 # interface
 egui = "0.36"
@@ -37,6 +38,11 @@ keyring = "4"
 tray-icon = "0.26"
 auto-launch = "0.6"
 interprocess = "2"
+# Windows adapters (`crates/os-windows`)
+windows-sys = "0.61"
+arboard = "3.6"
+clipboard-win = "5.4"
+png = "0.18"
 
 # tooling (resources of the Windows executable)
 winresource = "0.1"
