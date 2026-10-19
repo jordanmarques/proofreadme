@@ -19,7 +19,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use proofreadme::{IconPort, LoginRegistration, RegistrationError, Request, Window};
 use proofreadme_core::{
-    Agent, ClipboardContent, Direction, IconState, Key, KeyEvent, Keystroke, Mark, MemoryKeychain, Modifier, Os, OsError, Settings, Storage, Timing,
+    Agent, ClipboardContent, DEFAULT_TRIGGER, Direction, IconState, Key, KeyEvent, Keystroke, Mark, MemoryKeychain, Os, OsError, Settings, Storage,
+    Timing,
 };
 use support::{API_KEY, DELAY, config, loaded, observed, show_until};
 
@@ -120,10 +121,11 @@ fn is_checked(window: &Harness<'_, Window>, label: &str) -> bool {
     format!("{:?}", window.get_by_label(label).accesskit_node().toggled()).contains("True")
 }
 
+/// A double press of the default trigger key (Cmd on macOS, Ctrl elsewhere).
 fn trigger(agent: &Agent) {
     let now = Instant::now();
     for direction in [Direction::Down, Direction::Up, Direction::Down, Direction::Up] {
-        agent.key_event(KeyEvent { key: Key::Modifier(Modifier::Ctrl), direction, at: now, injected: false });
+        agent.key_event(KeyEvent { key: Key::Modifier(DEFAULT_TRIGGER), direction, at: now, injected: false });
     }
 }
 
