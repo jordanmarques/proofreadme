@@ -43,7 +43,6 @@ fn main() -> ExitCode {
 
 fn capture(folder: &Path) -> Result<(), String> {
     fs::create_dir_all(folder).map_err(say)?;
-    home(folder)?;
     permission_missing(folder)?;
     settings_at_first_launch(folder)?;
     settings_without_registration(folder)?;
@@ -94,19 +93,13 @@ fn save<State>(harness: &mut Harness<'_, State>, folder: &Path, name: &str) -> R
     Ok(())
 }
 
-fn home(folder: &Path) -> Result<(), String> {
-    let data = tempfile::tempdir().map_err(say)?;
-    let mut harness = open(Window::new(agent(data.path(), true)?));
-    save(&mut harness, folder, "home")
-}
-
-/// The home while the keyboard hook lacks the permission of the OS: the permission panel.
+/// The settings while the keyboard hook lacks the permission of the OS: the permission panel.
 fn permission_missing(folder: &Path) -> Result<(), String> {
     let data = tempfile::tempdir().map_err(say)?;
     let agent = agent(data.path(), true)?;
     agent.hook().permission(Permission::Missing);
     let mut harness = open(Window::new(agent).with_permission_pane(|| {}));
-    save(&mut harness, folder, "home-permission-missing")
+    save(&mut harness, folder, "settings-permission-missing")
 }
 
 fn settings_at_first_launch(folder: &Path) -> Result<(), String> {
