@@ -2,7 +2,7 @@
 //!
 //! This crate assembles the core (`proofreadme-core`) and the Kairo theme (`kairo`). The window
 //! shows the state of the agent and passes the commands on to it, dressed with nothing but the
-//! Kairo widgets and tokens. Two screens: the home of the agent and its settings.
+//! Kairo widgets and tokens. A single screen: the settings of the agent.
 //!
 //! The agent lives in the session (ADR 0001): a session icon shows its state, a second launch
 //! brings its settings window back, closing the window hides it, and it registers itself at login.
@@ -23,8 +23,8 @@ mod unsupported;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use kairo::{Button, StatusLight, TitleCard, tokens};
-use proofreadme_core::{Activity, Agent, AgentLog, IconState, LoginItem, Permission, Settings, Storage, Timing};
+use kairo::tokens;
+use proofreadme_core::{Agent, AgentLog, IconState, LoginItem, Settings, Storage, Timing};
 
 pub use icon::{IconError, IconPort, SessionIcon};
 pub use instance::{Instance, InstanceListener, announce};
@@ -37,26 +37,13 @@ pub use unsupported::UnsupportedOs;
 /// The name of the application, shown in the title of the window.
 const NAME: &str = "ProofReadMe";
 
-/// The screen shown by the window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Screen {
-    /// The name and the activity of the agent.
-    Home,
-    /// The settings form.
-    Settings,
-}
-
 /// What the user asked for on a screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
-    /// Open the settings.
-    OpenSettings,
     /// Save the settings being edited.
     Save,
     /// Test the provider with the settings being edited.
     Test,
-    /// Back to the home screen.
-    Back,
     /// Open the pane of System Settings where the permission of the keyboard hook is granted.
     OpenPermissionPane,
 }
@@ -71,8 +58,7 @@ struct Look {
 /// The window of the agent.
 pub struct Window {
     agent: Agent,
-    screen: Screen,
-    /// The settings being edited, taken from the agent when the settings screen opens.
+    /// The settings being edited, taken from the agent again whenever it asks for its settings.
     draft: Settings,
     /// The requests of the agent for the settings already followed.
     followed_requests: u64,
@@ -99,7 +85,6 @@ impl Window {
         let draft = agent.settings();
         Self {
             agent,
-            screen: Screen::Home,
             draft,
             followed_requests: 0,
             followed_window_requests: 0,
@@ -215,20 +200,17 @@ impl Window {
     }
 
     fn open_settings(&mut self) {
-        self.screen = Screen::Settings;
         self.draft = self.agent.settings();
         self.saved = false;
     }
 
     fn act(&mut self, action: Action) {
         match action {
-            Action::OpenSettings => self.open_settings(),
             Action::Save => self.saved = self.agent.save_settings(self.draft.clone()).is_ok(),
             // A refusal of the Test lands in the state of the agent, which the screen shows.
             Action::Test => {
                 let _ = self.agent.test_provider(&self.draft);
             }
-            Action::Back => self.screen = Screen::Home,
             Action::OpenPermissionPane => {
                 if let Some(open) = self.permission_pane.as_mut() {
                     open();
@@ -269,11 +251,7 @@ impl eframe::App for Window {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(tokens::SPACE_5, tokens::SPACE_5);
                 let pane = permission::show(ui, &state, self.permission_pane.is_some());
-                action = match self.screen {
-                    Screen::Home => home(ui, &state),
-                    Screen::Settings => settings::show(ui, &mut self.draft, &state, self.saved, self.presence.has_no_icon()),
-                }
-                .or(pane);
+                action = settings::show(ui, &mut self.draft, &state, self.saved, self.presence.has_no_icon()).or(pane);
             });
         });
         if self.draft != before {
@@ -283,19 +261,6 @@ impl eframe::App for Window {
             self.act(action);
         }
     }
-}
-
-/// The home screen: the name of the agent, what it is doing, and the way to the settings.
-fn home(ui: &mut egui::Ui, state: &proofreadme_core::State) -> Option<Action> {
-    ui.add(TitleCard::new("PROOFREADME").kicker("AGENT 校正").height(240.0).title_size(tokens::TEXT_4XL));
-    let light = match state.activity {
-        Activity::Idle if state.no_trigger.is_some() => StatusLight::alert().label("Trigger off").jp("停止"),
-        Activity::Idle if state.permission != Permission::Granted => StatusLight::warn().label("Waiting for permission").jp("許可待ち"),
-        Activity::Idle => StatusLight::ok().label("Listening").jp("待機"),
-        Activity::Proofreading(_) => StatusLight::info().blink(true).label("Proofreading").jp("校正中"),
-    };
-    ui.add(light);
-    ui.add(Button::secondary("Settings").jp("設定")).clicked().then_some(Action::OpenSettings)
 }
 
 /// The options for opening the window: its title, its size, and on macOS the bearing of a session

@@ -39,7 +39,7 @@ fn a_granted_permission_shows_no_panel() {
 
     window.run_ok();
 
-    window.get_by_label("SETTINGS");
+    window.get_by_label("SAVE");
     assert!(window.query_by_label("OPEN SYSTEM SETTINGS").is_none());
 }
 
@@ -52,7 +52,7 @@ fn a_missing_permission_shows_the_panel_whose_button_opens_the_pane_of_system_se
     window.run_ok();
 
     window.get_by_label_contains("Accessibility");
-    assert!(window.query_by_label_contains("LISTENING").is_none(), "the agent does not listen");
+    window.get_by_label("SAVE");
     window.get_by_label("OPEN SYSTEM SETTINGS").click();
     window.run_ok();
 
@@ -121,20 +121,4 @@ fn a_hook_that_cannot_listen_brings_the_hidden_window_back_and_says_why() {
     window.run_ok();
 
     window.get_by_label_contains("No trigger: Windows refused the keyboard hook");
-    assert!(window.query_by_label_contains("LISTENING").is_none(), "the agent does not listen");
-}
-
-#[test]
-fn the_panel_shows_on_the_settings_too() {
-    let folder = tempfile::tempdir().unwrap();
-    let agent = configured(folder.path());
-    agent.hook().permission(Permission::Missing);
-    let (mut window, _) = window(agent);
-    window.run_ok();
-
-    window.get_by_label("SETTINGS").click();
-    window.run_ok();
-
-    window.get_by_label("SAVE");
-    window.get_by_label("OPEN SYSTEM SETTINGS");
 }

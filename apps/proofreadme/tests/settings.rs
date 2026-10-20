@@ -128,20 +128,23 @@ fn a_trigger_without_a_key_opens_the_settings_and_sends_no_request() {
     let settings = Settings { trigger: Modifier::Shift, provider: support::provider(&provider.base_url()), ..Settings::default() };
     loaded(folder.path(), &keychain).save_settings(settings.clone()).unwrap();
     let (agent, wakeups) = observed(loaded(folder.path(), &keychain));
-    let mut window = window(agent);
-    window.get_by_label("SETTINGS");
-    // The key goes away without the settings screen: the window stays on the home screen.
+    let mut window = Harness::builder().build_eframe(|creation| {
+        kairo::install(&creation.egui_ctx);
+        Window::new(agent).in_background()
+    });
+    window.run_ok();
+    // The key goes away while the window is hidden: nothing brings it back yet.
     let mut keyless = settings;
     keyless.provider.api_key = String::new();
     window.state().agent().save_settings(keyless).unwrap();
     window.run_ok();
-    assert!(window.query_by_label("SAVE").is_none());
+    assert!(window.state().is_hidden());
 
     let now = Instant::now();
     for direction in [Direction::Down, Direction::Up, Direction::Down, Direction::Up] {
         window.state().agent().key_event(KeyEvent { key: Key::Modifier(Modifier::Shift), direction, at: now, injected: false });
     }
-    show_until(&mut window, &wakeups, |window| window.query_by_label("SAVE").is_some());
+    show_until(&mut window, &wakeups, |window| !window.state().is_hidden());
 
     assert!(provider.received().is_empty());
 }

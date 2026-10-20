@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "kairo"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "eframe",
  "egui",
@@ -3359,7 +3359,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "proofreadme"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "auto-launch",
  "dirs 6.0.0",
@@ -3386,7 +3386,7 @@ dependencies = [
 
 [[package]]
 name = "proofreadme-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3399,11 +3399,11 @@ dependencies = [
 
 [[package]]
 name = "proofreadme-icon"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "proofreadme-os-macos"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arboard",
  "core-foundation 0.10.1",
@@ -3416,7 +3416,7 @@ dependencies = [
 
 [[package]]
 name = "proofreadme-os-windows"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arboard",
  "clipboard-win",
@@ -5439,7 +5439,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "png",
  "proofreadme-icon",

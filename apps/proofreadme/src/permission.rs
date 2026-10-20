@@ -1,4 +1,4 @@
-//! The permission panel: shown above either screen while the agent is deaf to the trigger, as it
+//! The permission panel: shown above the settings while the agent is deaf to the trigger, as it
 //! reports it: the keyboard hook lacks the permission of the OS (Accessibility on macOS), or cannot
 //! listen at all.
 

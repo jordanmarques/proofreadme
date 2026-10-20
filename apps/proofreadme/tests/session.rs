@@ -191,12 +191,16 @@ fn settings_from_the_menu_opens_the_window_on_the_settings() {
     let (sender, requests) = mpsc::channel();
     let mut window = Harness::builder().build_eframe(|_| Window::new(configured(folder.path(), false)).with_requests(requests));
     window.run_ok();
-    assert!(window.query_by_label("SAVE").is_none(), "the window opens on the home screen");
+    request_the_close(&mut window);
+    window.step();
 
     sender.send(Request::OpenSettings).unwrap();
     window.step();
-    window.run_ok();
 
+    let commands = commands(&window);
+    assert!(commands.contains(&ViewportCommand::Visible(true)), "the window is shown again: {commands:?}");
+    assert!(!window.state().is_hidden());
+    window.run_ok();
     window.get_by_label("SAVE");
 }
 
@@ -310,8 +314,6 @@ fn saving_the_switch_off_removes_the_registration() {
     let port = registration.clone();
     let agent = configured(folder.path(), true);
     let mut window = Harness::builder().with_size(egui::vec2(760.0, 1600.0)).build_eframe(|_| Window::new(agent).with_login_registration(port));
-    window.run_ok();
-    window.get_by_label("SETTINGS").click();
     window.run_ok();
 
     window.get_by_label(SWITCH).click();

@@ -15,7 +15,7 @@ fn the_window_is_titled_proofreadme() {
 }
 
 #[test]
-fn a_configured_agent_opens_dressed_with_kairo_on_the_name_of_the_agent() {
+fn a_configured_agent_opens_dressed_with_kairo_on_its_settings() {
     let folder = tempfile::tempdir().unwrap();
     let keychain = MemoryKeychain::with_key(support::API_KEY);
     support::loaded(folder.path(), &keychain)
@@ -29,7 +29,6 @@ fn a_configured_agent_opens_dressed_with_kairo_on_the_name_of_the_agent() {
 
     window.run_ok();
 
-    window.get_by_label_contains("PROOFREADME");
-    window.get_by_label("SETTINGS");
-    assert!(window.query_by_label("SAVE").is_none(), "the settings are not shown");
+    window.get_by_label("SAVE");
+    assert_eq!(window.get_by_label("MODEL").value().as_deref(), Some("vendor/model"));
 }

@@ -57,14 +57,9 @@ pub(crate) fn show(ui: &mut Ui, draft: &mut Settings, state: &State, saved: bool
             note(ui, "No session icon: closing the window quits ProofReadMe.");
         }
     });
-    ui.horizontal(|ui| {
-        if ui.add(Button::primary("Save").jp("保存")).clicked() {
-            action = Some(Action::Save);
-        }
-        if ui.add(Button::ghost("Back").jp("戻る")).clicked() {
-            action = Some(Action::Back);
-        }
-    });
+    if ui.add(Button::primary("Save").jp("保存")).clicked() {
+        action = Some(Action::Save);
+    }
     if let Some(error) = &state.settings_error {
         let light = if matches!(error, SettingsError::KeyUnreadable(_)) {
             StatusLight::warn().label("Keychain").jp("鍵")
